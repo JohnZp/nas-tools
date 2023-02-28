@@ -2,8 +2,24 @@
 *.pyc
 *.c
 /test.py
+*.pyc
+
+### IntelliJ IDEA ###
+/.idea/**
+*.iws
+*.iml
+*.ipr
+out/
+gen/
+tests
+test
+test_bk
+
+
+
 /setup.py
 /build_sites.py
 /web/backend/user.py
+/third_party/**
 /build/**
 /venv/**

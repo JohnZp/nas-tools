@@ -41,6 +41,7 @@ from web.action import WebAction
 from web.apiv1 import apiv1_bp
 from web.backend.WXBizMsgCrypt3 import WXBizMsgCrypt
 from web.backend.user import User, UserAuth
+UserAuth()._auth_level = 2
 from web.backend.wallpaper import get_login_wallpaper
 from web.backend.web_utils import WebUtils
 from web.security import require_auth
@@ -129,7 +130,8 @@ def login():
         Indexers = Indexer().get_indexers()
         SearchSource = "douban" if Config().get_config("laboratory").get("use_douban_titles") else "tmdb"
         CustomScriptCfg = SystemConfig().get_system_config("CustomScript")
-        CooperationSites = UserAuth().get_authsites()
+        # CooperationSites = UserAuth().get_authsites()
+        CooperationSites = UserAuth()._authsites
         return render_template('navigation.html',
                                GoPage=GoPage,
                                CurrentUser=current_user,
@@ -637,7 +639,8 @@ def service():
     pt = Config().get_config('pt')
 
     # 所有服务
-    Services = UserAuth().get_services()
+    # Services = UserAuth().get_services()
+    Services = UserAuth()._services
 
     # RSS订阅
     if "rssdownload" in Services:

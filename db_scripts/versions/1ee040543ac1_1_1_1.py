@@ -1,7 +1,7 @@
 """1.1.1
 
 Revision ID: 1ee040543ac1
-Revises: 720a6289a697
+Revises: 720a6289a697u
 Create Date: 2023-02-21 08:18:12.861788
 
 """

@@ -165,8 +165,9 @@ class SystemUtils:
                 # 兼容极空间Z4
                 tmp = os.path.normpath(os.path.join(PathUtils.get_parent_paths(dest, 2),
                                                     os.path.basename(dest)))
-                os.link(os.path.normpath(src), tmp)
-                shutil.move(tmp, os.path.normpath(dest))
+                os.system('ln "%s" "%s" ; mv "%s" "%s"' % (os.path.normpath(src), tmp, tmp, os.path.normpath(dest)))
+                # os.link(os.path.normpath(src), tmp)
+                # shutil.move(tmp, os.path.normpath(dest))
             else:
                 os.link(os.path.normpath(src), os.path.normpath(dest))
             return 0, ""

@@ -4655,7 +4655,8 @@ class WebAction:
         """
         return {
             "code": 0,
-            "menus": UserAuth().get_topmenus()
+            # "menus": UserAuth().get_topmenus()
+            "menus": UserAuth()._usermenus
         }
 
     @staticmethod

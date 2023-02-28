@@ -9,6 +9,7 @@ from app.utils import SystemUtils, PathUtils
 from app.utils.commons import singleton
 from config import Config
 from web.backend.user import UserAuth
+UserAuth()._auth_level = 2
 
 
 @singleton
