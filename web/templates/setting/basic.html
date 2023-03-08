@@ -128,7 +128,7 @@
               <div class="col-lg">
                 <div class="mb-3">
                   <label class="form-label">代理服务器 <span class="form-help"
-                                                             title="将使用代理访服务器访问themoviedb、telegram、公开bt站等境外网站及程序更新(git)，站点默认不使用代理，如需使用需在站点维护中开启；配置格式示例：127.0.0.1:7890（Http协议）、socks5://127.0.0.1:8018、socks5h://127.0.0.1:8018(remote DNS)"
+                                                             title="将使用代理访服务器访问themoviedb、telegram等境外网站及程序更新(git)，站点默认不使用代理，如需使用需在站点维护中开启；配置格式示例：127.0.0.1:7890（Http协议）、socks5://127.0.0.1:8018、socks5h://127.0.0.1:8018(remote DNS)"
                                                              data-bs-toggle="tooltip">?</span></label>
                   <input type="text" value="{{ Proxy or '' }}" class="form-control" id="app.proxies"
                          placeholder="127.0.0.1:7890" autocomplete="off">
@@ -256,6 +256,15 @@
                   </select>
                 </div>
               </div>
+              <div class="col-lg-4">
+                <div class="mb-3">
+                  <label class="form-label">文件管理默认路径 <span class="form-help"
+                                                               title="文件管理、自定义识别等默认路径"
+                                                               data-bs-toggle="tooltip">?</span></label>
+                  <input type="text" value="{{ Config.media.media_default_path or '' }}" class="form-control" id="media.media_default_path"
+                         placeholder="/" autocomplete="off">
+                </div>
+              </div>
             </div>
             <div class="row">
               <div class="col-lg">
@@ -290,7 +299,7 @@
               <div class="col">
                 <div class="mb-3">
                   <label class="form-label required">电影重命名格式 <span class="form-help"
-                                                                          title="程序会按定义的命名格式对电影进行重命名；/代表上下级目录，{}内为占位符，转义为&#123;&#123;&#125;&#125;；占位符会使用文件识别出来的实际值替换；占位符外的字符会当成普通字符，直接体现在名称上。<br>电影占位符：<br>{title}：标题<br>{en_title}：英文标题<br>{original_title}：原语种标题<br>{original_name}：原文件名<br>{year}：年份<br>{edition}：版本(Bluray/WEB-DL等)<br>{videoFormat}：分辨率(1080p/4k等)<br>{videoCodec}：视频编码<br>{audioCodec}：音频编码及声道<br>{tmdbid}：TMDB的ID<br>{part}：part1/disc1/dvd1<br>{releaseGroup}：制作组/字幕组<br>{name}：识别名称（文件名中识别出的名称，可用自定义识别词替换）<br><br>重命名使用Python的format格式化，可进行指定格式输出"
+                                                                          title="程序会按定义的命名格式对电影进行重命名；/代表上下级目录，{}内为占位符，转义为&#123;&#123;&#125;&#125;；占位符会使用文件识别出来的实际值替换；占位符外的字符会当成普通字符，直接体现在名称上。<br>电影占位符：<br>{title}：标题<br>{en_title}：英文标题<br>{original_title}：原语种标题<br>{original_name}：原文件名<br>{year}：年份<br>{edition}：版本(Bluray/WEB-DL等)<br>{videoFormat}：分辨率(1080p/4k等)<br>{videoCodec}：视频编码<br>{audioCodec}：音频编码及声道<br>{tmdbid}：TMDB的ID<br>{imdbid}：IMDB的ID<br>{part}：part1/disc1/dvd1<br>{releaseGroup}：制作组/字幕组<br>{name}：识别名称（文件名中识别出的名称，可用自定义识别词替换）<br><br>重命名使用Python的format格式化，可进行指定格式输出"
                                                                           data-bs-toggle="tooltip"
                                                                           data-bs-html="true">?</span></label>
                   <input type="text" value="{{ Config.media.movie_name_format or '' }}" class="form-control"
@@ -304,7 +313,7 @@
               <div class="col">
                 <div class="mb-3">
                   <label class="form-label required">电视剧重命名格式 <span class="form-help"
-                                                                            title="程序会按定义的命名格式对电视剧进行重命名；/代表上下级目录，{}内为占位符，转义为&#123;&#123;&#125;&#125;；占位符会使用文件识别出来的实际值替换，占位符外的字符会当成普通字符，直接体现在名称上。<br>电视剧占位符：<br>{title}：标题<br>{en_title}：英文标题<br>{original_title}：原语种标题<br>{original_name}：原文件名<br>{year}：年份<br>{edition}：版本(Bluray/WEB-DL等)<br>{videoFormat}：分辨率(1080p/4k等)<br>{videoCodec}：视频编码<br>{audioCodec}：音频编码及声道<br>{tmdbid}：TMDB的ID<br>{season}：季数<br>{episode}：集数<br>{episode_title}：集标题<br>{season_episode}：剧集SxxExx<br>{part}：part1/disc1/dvd1<br>{releaseGroup}：制作组/字幕组<br>{name}：识别名称（文件名中识别出的名称，可用自定义识别词替换）<br><br>重命名使用Python的format格式化，可进行指定格式输出"
+                                                                            title="程序会按定义的命名格式对电视剧进行重命名；/代表上下级目录，{}内为占位符，转义为&#123;&#123;&#125;&#125;；占位符会使用文件识别出来的实际值替换，占位符外的字符会当成普通字符，直接体现在名称上。<br>电视剧占位符：<br>{title}：标题<br>{en_title}：英文标题<br>{original_title}：原语种标题<br>{original_name}：原文件名<br>{year}：年份<br>{edition}：版本(Bluray/WEB-DL等)<br>{videoFormat}：分辨率(1080p/4k等)<br>{videoCodec}：视频编码<br>{audioCodec}：音频编码及声道<br>{tmdbid}：TMDB的ID<br>{imdbid}：IMDB的ID<br>{season}：季数<br>{episode}：集数<br>{episode_title}：集标题<br>{season_episode}：剧集SxxExx<br>{part}：part1/disc1/dvd1<br>{releaseGroup}：制作组/字幕组<br>{name}：识别名称（文件名中识别出的名称，可用自定义识别词替换）<br><br>重命名使用Python的format格式化，可进行指定格式输出"
                                                                             data-bs-toggle="tooltip"
                                                                             data-bs-html="true">?</span></label>
                   <input type="text" value="{{ Config.media.tv_name_format or '' }}" class="form-control"
@@ -859,7 +868,7 @@
                     <label class="form-check">
                       <input class="form-check-input" type="checkbox" id="scraper_pic.tv.background" {% if
                         Config.scraper_pic and Config.scraper_pic.tv.background %}checked{% endif %}>
-                      <span class="form-check-label">show </span>
+                      <span class="form-check-label">background </span>
                     </label>
                   </div>
                 </div>

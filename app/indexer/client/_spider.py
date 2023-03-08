@@ -9,7 +9,7 @@ from pyquery import PyQuery
 import feapder
 import log
 from app.helper import RedisHelper
-from app.utils import StringUtils, SystemUtils
+from app.utils import StringUtils, SystemUtils, RequestUtils
 from app.utils.exception_utils import ExceptionUtils
 from app.utils.types import MediaType
 from config import Config
@@ -20,7 +20,6 @@ class TorrentSpider(feapder.AirSpider):
     _webdriver_path = SystemUtils.get_webdriver_path()
     _redis_valid = RedisHelper.is_valid()
     __custom_setting__ = dict(
-        USE_SESSION=True,
         SPIDER_THREAD_COUNT=1,
         SPIDER_MAX_RETRY_TIMES=0,
         REQUEST_LOST_TIMEOUT=10,
@@ -48,6 +47,8 @@ class TorrentSpider(feapder.AirSpider):
     )
     # 是否检索完成标志
     is_complete = False
+    # 是否出现错误
+    is_error = False
     # 索引器ID
     indexerid = None
     # 索引器名称
@@ -84,7 +85,9 @@ class TorrentSpider(feapder.AirSpider):
     page = 0
     # 检索条数
     result_num = 100
+    # 单个种子信息
     torrents_info = {}
+    # 种子列表
     torrents_info_array = []
 
     def setparam(self, indexer,
@@ -187,7 +190,8 @@ class TorrentSpider(feapder.AirSpider):
                 # 查询参数
                 params = {
                     "search_mode": search_mode,
-                    "page": self.page or 0
+                    "page": self.page or 0,
+                    "notnewword": 1
                 }
                 # 额外参数
                 for key, value in self.search.get("params").items():
@@ -249,9 +253,9 @@ class TorrentSpider(feapder.AirSpider):
 
     def download_midware(self, request):
         request.headers = {
-            "User-Agent": self.ua,
-            "Cookie": self.cookie
+            "User-Agent": self.ua
         }
+        request.cookies = RequestUtils.cookie_parse(self.cookie)
         if self.proxies:
             request.proxies = self.proxies
         return request
@@ -624,6 +628,7 @@ class TorrentSpider(feapder.AirSpider):
             # 获取站点文本
             html_text = response.extract()
             if not html_text:
+                self.is_error = True
                 self.is_complete = True
                 return
             # 解析站点文本对象
@@ -653,6 +658,7 @@ class TorrentSpider(feapder.AirSpider):
                     break
 
         except Exception as err:
+            self.is_error = True
             ExceptionUtils.exception_traceback(err)
             log.warn("【Spider】错误：%s" % str(err))
         finally:

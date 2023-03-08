@@ -40,8 +40,7 @@ from config import PT_TRANSFER_INTERVAL, Config
 from web.action import WebAction
 from web.apiv1 import apiv1_bp
 from web.backend.WXBizMsgCrypt3 import WXBizMsgCrypt
-from web.backend.user import User, UserAuth
-UserAuth()._auth_level = 2
+from web.backend.user import User
 from web.backend.wallpaper import get_login_wallpaper
 from web.backend.web_utils import WebUtils
 from web.security import require_auth
@@ -129,9 +128,8 @@ def login():
         SiteFavicons = Sites().get_site_favicon()
         Indexers = Indexer().get_indexers()
         SearchSource = "douban" if Config().get_config("laboratory").get("use_douban_titles") else "tmdb"
-        CustomScriptCfg = SystemConfig().get_system_config("CustomScript")
-        # CooperationSites = UserAuth().get_authsites()
-        CooperationSites = UserAuth()._authsites
+        CustomScriptCfg = SystemConfig().get_system_config(SystemConfigKey.CustomScript)
+        CooperationSites = current_user.get_authsites()
         return render_template('navigation.html',
                                GoPage=GoPage,
                                CurrentUser=current_user,
@@ -217,7 +215,7 @@ def index():
 
     # 媒体库
     Librarys = MediaServer().get_libraries()
-    LibrarySyncConf = SystemConfig().get_system_config("SyncLibrary") or []
+    LibrarySyncConf = SystemConfig().get_system_config(SystemConfigKey.SyncLibrary) or []
 
     return render_template("index.html",
                            ServerSucess=ServerSucess,
@@ -347,8 +345,8 @@ def sites():
     RuleGroups = {str(group["id"]): group["name"] for group in Filter().get_rule_groups()}
     DownloadSettings = {did: attr["name"] for did, attr in Downloader().get_download_setting().items()}
     ChromeOk = ChromeHelper().get_status()
-    CookieCloudCfg = SystemConfig().get_system_config('CookieCloud')
-    CookieUserInfoCfg = SystemConfig().get_system_config('CookieUserInfo')
+    CookieCloudCfg = SystemConfig().get_system_config(SystemConfigKey.CookieCloud)
+    CookieUserInfoCfg = SystemConfig().get_system_config(SystemConfigKey.CookieUserInfo)
     return render_template("site/site.html",
                            Sites=CfgSites,
                            RuleGroups=RuleGroups,
@@ -639,8 +637,7 @@ def service():
     pt = Config().get_config('pt')
 
     # 所有服务
-    # Services = UserAuth().get_services()
-    Services = UserAuth()._services
+    Services = current_user.get_services()
 
     # RSS订阅
     if "rssdownload" in Services:
@@ -815,15 +812,19 @@ def unidentification():
 @App.route('/mediafile', methods=['POST', 'GET'])
 @login_required
 def mediafile():
-    download_dirs = Downloader().get_download_visit_dirs()
-    if download_dirs:
-        try:
-            DirD = os.path.commonpath(download_dirs).replace("\\", "/")
-        except Exception as err:
-            print(str(err))
-            DirD = "/"
+    media_default_path = Config().get_config('media').get('media_default_path')
+    if media_default_path:
+        DirD = media_default_path
     else:
-        DirD = "/"
+        download_dirs = Downloader().get_download_visit_dirs()
+        if download_dirs:
+            try:
+                DirD = os.path.commonpath(download_dirs).replace("\\", "/")
+            except Exception as err:
+                print(str(err))
+                DirD = "/"
+        else:
+            DirD = "/"
     DirR = request.args.get("dir")
     return render_template("rename/mediafile.html",
                            Dir=DirR or DirD)
@@ -837,7 +838,7 @@ def basic():
     if proxy:
         proxy = proxy.replace("http://", "")
     RmtModeDict = WebAction().get_rmt_modes()
-    CustomScriptCfg = SystemConfig().get_system_config("CustomScript")
+    CustomScriptCfg = SystemConfig().get_system_config(SystemConfigKey.CustomScript)
     return render_template("setting/basic.html",
                            Config=Config().get_config(),
                            Proxy=proxy,
@@ -1017,7 +1018,7 @@ def rss_parser():
 @App.route('/plugin', methods=['POST', 'GET'])
 @login_required
 def plugin():
-    Plugins = PluginManager().get_plugins_conf()
+    Plugins = PluginManager().get_plugins_conf(current_user.level)
     return render_template("setting/plugin.html",
                            Plugins=Plugins)
 
@@ -1046,7 +1047,10 @@ def dirlist():
         r = ['<ul class="jqueryFileTree" style="display: none;">']
         in_dir = request.form.get('dir')
         ft = request.form.get("filter")
-        if not in_dir or in_dir == "/":
+        if not in_dir:
+            media_default_path = Config().get_config('media').get('media_default_path')
+            in_dir = media_default_path if media_default_path else "/"
+        if in_dir == "/":
             if SystemUtils.get_system() == OsType.WINDOWS:
                 partitions = SystemUtils.get_windows_drives()
                 if partitions:
@@ -1286,9 +1290,9 @@ def telegram():
                     return '只有管理员才有权限执行此命令'
             else:
                 if not str(user_id) in interactive_client.get("client").get_users():
-                    message.send_channel_msg(channel=SearchType.TG,
-                                             title="你不在用户白名单中，无法使用此机器人",
-                                             user_id=user_id)
+                    Message().send_channel_msg(channel=SearchType.TG,
+                                               title="你不在用户白名单中，无法使用此机器人",
+                                               user_id=user_id)
                     return '你不在用户白名单中，无法使用此机器人'
             WebAction().handle_message_job(msg=text,
                                            in_from=SearchType.TG,

@@ -193,6 +193,7 @@ class Plex(_IMediaClient):
                 "season_num": episode.seasonNumber,
                 "episode_num": episode.index
             })
+        return ret_tvs
 
     def get_no_exists_episodes(self, meta_info, season, total_num):
         """
@@ -253,7 +254,6 @@ class Plex(_IMediaClient):
             libraries.append({"id": library.key, "name": library.title})
         return libraries
 
-    @staticmethod
     def get_iteminfo(self, itemid):
         """
         获取单个项目详情
@@ -295,8 +295,7 @@ class Plex(_IMediaClient):
                            "tmdbid": ids['tmdb_id'],
                            "imdbid": ids['imdb_id'],
                            "tvdbid": ids['tvdb_id'],
-                           "path": path,
-                           "json": str(item.__dict__)}
+                           "path": path}
         except Exception as err:
             ExceptionUtils.exception_traceback(err)
         yield {}

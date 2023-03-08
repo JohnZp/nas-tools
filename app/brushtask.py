@@ -264,7 +264,7 @@ class BrushTask(object):
                 task_name = taskinfo.get("name")
                 downloader_id = taskinfo.get("downloader")
                 remove_rule = taskinfo.get("remove_rule")
-                sendmessage = True if taskinfo.get("sendmessage") == "Y" else False
+                sendmessage = taskinfo.get("sendmessage")
 
                 # 当前任务种子详情
                 task_torrents = self.dbhelper.get_brushtask_torrents(taskid)
@@ -338,8 +338,11 @@ class BrushTask(object):
                     total_uploaded += torrent_info.get("uploaded")
                     # 总下载量
                     total_downloaded += torrent_info.get("downloaded")
+                    # 分享率 上传量 / 种子大小
+                    ratio = float(torrent_info.get("uploaded")) / float(torrent_info.get("total_size"))
                     # 判断是否符合删除条件
                     need_delete, delete_type = self.__check_remove_rule(remove_rule=remove_rule,
+                                                                        ratio=ratio,
                                                                         dltime=torrent_info.get("dltime"),
                                                                         avg_upspeed=torrent_info.get("avg_upspeed"),
                                                                         iatime=torrent_info.get("iatime"))
@@ -393,7 +396,7 @@ class BrushTask(object):
         downloader_id = taskinfo.get("downloader")
         downloader_name = taskinfo.get("downloader_name")
         total_size = self.dbhelper.get_brushtask_totalsize(taskinfo.get("id"))
-        if taskinfo.get(""):
+        if seed_size:
             if float(seed_size) * 1024 ** 3 <= int(total_size):
                 log.warn("【Brush】刷流任务 %s 当前保种体积 %sGB，不再新增下载"
                          % (task_name, round(int(total_size) / 1024 / 1024 / 1024, 1)))
@@ -459,6 +462,7 @@ class BrushTask(object):
             media_info=meta_info,
             tag=tag,
             downloader_id=downloader_id,
+            download_setting="-2",
             download_limit=download_limit,
             upload_limit=upload_limit,
         )
@@ -698,6 +702,8 @@ class BrushTask(object):
             iatime = date_now - last_activity if last_activity else 0
             # 下载量
             downloaded = torrent.get("downloaded")
+            # 种子大小
+            total_size = torrent.get("total_size")
         else:
             # ID
             torrent_id = torrent.id
@@ -716,6 +722,8 @@ class BrushTask(object):
             avg_upspeed = int(uploaded / dltime)
             # 未活动时间
             iatime = date_now - int(time.mktime(torrent.date_active.timetuple()))
+            # 种子大小
+            total_size = torrent.total_size
 
         return {
             "id": torrent_id,
@@ -725,7 +733,8 @@ class BrushTask(object):
             "downloaded": downloaded,
             "avg_upspeed": avg_upspeed,
             "iatime": iatime,
-            "dltime": dltime
+            "dltime": dltime,
+            "total_size": total_size
         }
 
     def stop_service(self):
