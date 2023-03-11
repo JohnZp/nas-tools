@@ -12,14 +12,14 @@ app:
   # 【日志级别】：info、debug、error
   loglevel: debug
   # 【WEB管理界面端口】：默认3000
-  web_port: 3000
+  web_port: '3000'
   # 【WEB管理页面登录用户】，默认admin
   login_user: admin
   # 【WEB管理页面登录密码】：默认password，如果是全数字密码，要用''括起来
   login_password: '[hash]pbkdf2:sha256:260000$CZe5gtGa7lfSwcau$8b4389af84d2f8ddbda316681485e91b40d7f714a5abb6586c0e3aabf09e4545'
   # 【WEB管理界面使用的HTTPS的证书和KEY的路径】，留空则不启用HTTPS
-  ssl_cert:
-  ssl_key:
+  ssl_cert: ''
+  ssl_key: ''
   # 【TMDB API KEY】：需要在https://www.themoviedb.org/申请，必须配置，否则无法识别媒体资源和重命名
   # 以下地址需要网络能够正常访问：api.themoviedb.org、images.weserv.nl、webservice.fanart.tv
   rmt_tmdbkey: 0b112d76ba56895fd6e81150ee117add
@@ -29,8 +29,8 @@ app:
   # 【设置代理】，themoviedb、fanart、telegram等将使用代理访问，http和https均需配置，可以是http也可以是socks5，但需要带http或socks5前缀，两项可以配置为一样，留空则不启用
   # 示例：'http://127.0.0.1:7890' 'socks5://127.0.0.1:8018'
   proxies:
-    http:
     https:
+    http:
   # 【本系统的WEB的外网地址】：需要是外网IP或者域名，需要包含端口，用于微信/Telegram信息点击跳转，如不需要可配空
   # 示例：http://IP:3000
   domain: ''
@@ -47,6 +47,8 @@ app:
   - update_userpris.sql
   - update_userrss.sql
   - stop_all_service.sql
+  releases_update_only: false
+  wallpaper: themoviedb
 media:
   # 【媒体库管理软件】：emby、jellyfin、plex，需要在emby或jellyfin或plex区配置详细信息，用于下载检查控重、媒体库展示等，建议配置
   media_server: emby
@@ -172,6 +174,7 @@ pt:
   pt_check_interval: 1800
 
 # 【配置Jackett检索器】
+  ptrefresh_date_cron: '6'
 jackett:
   # 【Jackett ApiKey】：Jackett配置页面右上角复制API Key
   api_key:

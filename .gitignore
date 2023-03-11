@@ -14,6 +14,8 @@ gen/
 tests
 test
 test_bk
+dbscript_gen_bk.py
+db_scripts/versions/ea6241f69d0c_3_0_2.py
 
 
 
