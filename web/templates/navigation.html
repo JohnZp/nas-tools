@@ -37,6 +37,7 @@
   <script src="../static/js/FileSaver.min.js"></script>
   <script src="../static/js/nprogress.js"></script>
   <script src="../static/js/numeral.min.js"></script>
+  <script src="../static/js/moment.min.js"></script>
   <script src="../static/js/fullcalendar.min.js"></script>
   <script src="../static/js/locales/zh-cn.js"></script>
   <script src="../static/js/jquery.filetree.js"></script>
@@ -62,6 +63,11 @@
     {{ OOPS.loading() }}
   </div>
 </div>
+<cmd-dialog theme="light" placeholder="搜索...">
+  <div slot="footer">
+    <p><kbd part="kbd">⏎</kbd> 确定 <kbd part="kbd">↑</kbd> <kbd part="kbd">↓</kbd> 选择 <kbd part="kbd">esc</kbd> 关闭</p>
+  </div>
+</cmd-dialog>
 <div class="offcanvas offcanvas-end" tabindex="-1" id="offcanvasEnd" aria-labelledby="消息中心">
   <div class="offcanvas-header">
     <h2 class="offcanvas-title" id="offcanvasEndLabel">消息中心</h2>
@@ -87,7 +93,7 @@
 <div class="modal modal-blur" id="modal-process" tabindex="-1" role="dialog" aria-hidden="true">
   <div class="modal-dialog modal-md modal-dialog-centered" role="document">
     <div class="modal-content">
-      <div class="card border-0" style="overflow:hidden">
+      <div class="card border-0">
         <div class="progress rounded-0">
           <div class="progress-bar progress-bar-striped progress-bar-animated" id="modal_process_bar"
                style="width: 0" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
@@ -110,7 +116,7 @@
       <div class="modal-body text-center py-4">
        <span class="mb-2 text-danger">{{ SVG.alert_triangle('icon-lg') }}</span>
         <h3>确认</h3>
-        <div class="text-muted text-wrap" id="system_confirm_message" style="overflow: hidden">是否确定？</div>
+        <div class="text-muted text-wrap" id="system_confirm_message">是否确定？</div>
       </div>
       <div class="modal-footer">
         <div class="w-100">
@@ -140,7 +146,7 @@
       <div class="modal-body text-center py-4">
         <span class="mb-2 text-green">{{ SVG.circle_check('icon-lg') }}</span>
         <h3>成功</h3>
-        <div class="text-muted text-wrap" id="system_success_action_message" style="overflow: hidden">操作成功！</div>
+        <div class="text-muted text-wrap" id="system_success_action_message">操作成功！</div>
       </div>
       <div class="modal-footer">
         <div class="w-100">
@@ -167,7 +173,7 @@
     <div class="modal-content">
       <div class="modal-body">
         <div class="modal-title">询问</div>
-        <div id="system_ask_message" class="text-wrap" style="overflow: hidden">是否执行？</div>
+        <div id="system_ask_message" class="text-wrap">是否执行？</div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-link link-secondary me-auto" data-bs-dismiss="modal">取消</button>
@@ -185,7 +191,7 @@
       <div class="modal-body text-center py-4">
         <span class="mb-2 text-green">{{ SVG.circle_check('icon-lg') }}</span>
         <h3>成功</h3>
-        <div class="text-muted text-wrap" id="system_success_message" style="overflow: hidden">成功！</div>
+        <div class="text-muted text-wrap" id="system_success_message">成功！</div>
       </div>
       <div class="modal-footer">
         <div class="w-100">
@@ -211,7 +217,7 @@
       <div class="modal-body text-center py-4">
         <span class="mb-2 text-warning">{{ SVG.alert_triangle('icon-lg') }}</span>
         <h3>失败</h3>
-        <div class="text-muted text-wrap" id="system_fail_message" style="overflow:hidden">失败！</div>
+        <div class="text-muted text-wrap" id="system_fail_message">失败！</div>
       </div>
       <div class="modal-footer">
         <div class="w-100">
@@ -236,8 +242,8 @@
         <div class="row row-0">
           <div class="col-3 d-none d-lg-block">
             <custom-img id="system_media_poster"
-                        img-class="w-100 h-100 object-cover"
-                        img-ratio="150%"
+                img-class="w-100 h-100 object-cover rounded-2"
+                img-ratio="150%"
             ></custom-img>
           </div>
           <div class="col">
@@ -475,6 +481,9 @@
               <label class="form-label required">季</label>
               <select class="form-select" id="rss_season">
                 <option value="" selected>请选择</option>
+                {% for i in range(1, 51) %}
+                  <option value="{{ i }}">第{{ i }}季</option>
+                {% endfor %}
               </select>
             </div>
           </div>
@@ -734,6 +743,9 @@
               <label class="form-label">季</label>
               <select class="form-select" id="rename_season">
                 <option value="" selected>请选择</option>
+                {% for i in range(0, 51) %}
+                  <option value="{{ i }}">第{{ i }}季</option>
+                {% endfor %}
               </select>
             </div>
           </div>
@@ -822,6 +834,7 @@
             <span class="dropzone-msg-desc">点击或者拖动种子文件到此处</span>
           </div>
         </form>
+        <textarea class="form-control mt-2" id="torrent_urls" rows="8" placeholder="https://xxxx，换行添加多个链接" aria-label=""></textarea>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-link link-secondary me-auto" data-bs-dismiss="modal">取消</button>
@@ -901,6 +914,9 @@
               <label class="form-label">季</label>
               <select class="form-select" id="advanced_search_season">
                 <option value="" selected>全部</option>
+                {% for i in range(1, 51) %}
+                  <option value="{{ i }}">第{{ i }}季</option>
+                {% endfor %}
               </select>
             </div>
           </div>
@@ -1469,13 +1485,6 @@
     });
   }
 
-  //初始化下拉框
-  let rss_season_content = `<option value="">请选择</option>`;
-  for (let i = 0; i <= 50; i++) {
-    rss_season_content += `<option value="${i}">第${i}季</option>`;
-  }
-  $("#rss_season").empty().append(rss_season_content);
-
   // 选择模糊匹配
   function change_match_check(obj) {
     if ($(obj).prop("checked")) {
@@ -1873,8 +1882,16 @@
       $("#search_download_setting").attr("onchange", "refresh_savepath_select('search_download_dir', true, $(this).val(), false)")
     }
 
-    if (!show_type) {
+    $("#torrent_urls").val("");
+    if (show_type === 'torrent') {
+      $("#torrent_files").show();
+      $("#torrent_urls").hide();
+    } else if (show_type === 'url') {
+      $("#torrent_urls").show();
       $("#torrent_files").hide();
+    } else {
+      $("#torrent_files").hide();
+      $("#torrent_urls").hide();
     }
 
     // 绑定下载按钮事件
@@ -2092,7 +2109,11 @@
       $('#rename_path_div').hide();
       $('#rename_inpath_div').show();
       $('#rename_outpath_div').show();
-      $("#rename_inpath").val(inpath);
+      if (inpath) {
+        $("#rename_inpath").val(inpath);
+      } else {
+        $("#rename_inpath").val("{{ DefaultPath }}");
+      }
       $("#rename_outpath").val('');
       $("#rename_syncmod_customize").val(syncmod);
       $("#unknown_id").val("");
@@ -2328,20 +2349,6 @@
     });
   }
 
-  //初始化季列表
-  function init_season_list() {
-    let rename_season_content = `<option value="" selected>请选择</option>`;
-    let search_season_content = `<option value="" selected>全部</option>`;
-    for (let i = 0; i <= 50; i++) {
-      rename_season_content += `<option value="${i}">第${i}季</option>`;
-      if (i > 0) {
-        search_season_content += `<option value="${i}">第${i}季</option>`;
-      }
-    }
-    $("#rename_season").empty().append(rename_season_content);
-    $("#advanced_search_season").empty().append(search_season_content);
-  }
-
 </script>
 
 <!-- 首页功能 -->
@@ -2408,7 +2415,7 @@
           const level = log.level;
           let tcolor = '';
           let bgcolor = '';
-          let tstyle = '';
+          let tstyle = '-webkit-line-clamp:4; display: -webkit-box; -webkit-box-orient:vertical; overflow:hidden; text-overflow: ellipsis;';
           if (level === "WARN") {
             tcolor = "text-warning";
             bgcolor = "bg-warning";
@@ -2422,18 +2429,18 @@
             tcolor = "text";
           }
           if (["Rmt", "Plugin"].includes(source) && text.includes(" 到 ")) {
-            tstyle = `white-space: pre;`
+            tstyle = `${tstyle} white-space: pre;`
             text = text.replace(/\s到\s/, "\n=> ")
           }
           if (text.includes("http") || text.includes("magnet")) {
-            tstyle = `word-break: break-all;`
+            tstyle = `${tstyle} word-break: break-all;`
             text = text.replace(/：((?:http|magnet).+?)(?:\s|$)/g, "：<a href='$1' target='_blank'>$1</a>")
           }
           tbody = `${tbody}
                     <tr>
                     <td style="${tdstyle}"><span class="${tcolor}">${time}</span></td>
                     <td style="${tdstyle}"><span class="badge ${bgcolor}">${source}</span></td>
-                    <td style="${tdstyle}"><span class="${tcolor}" style="${tstyle}">${text}</span></td>
+                    <td style="${tdstyle}"><span class="${tcolor}" style="${tstyle}" title="${text}">${text}</span></td>
                     </tr>`;
         }
         let logging_table_obj = $("#logging_table");
@@ -2653,6 +2660,14 @@
     $(`#user_auth_${siteid}_params`).show();
   }
 
+  // 读取浏览器UA
+  function set_user_agent(id) {
+    let userAgent = navigator.userAgent;
+    if (userAgent){
+        $("#"+id).val(userAgent);
+    }
+  }
+
 </script>
 
 <!-- 事件  -->
@@ -2687,9 +2702,6 @@
       e.preventDefault();
       e.stopPropagation();
     });
-
-    // 初始化季列表
-    init_season_list();
 
     // 初始化DropZone
     torrent_dropzone = new Dropzone("#torrent_files");
@@ -2726,6 +2738,43 @@
 
 <!-- 动态载入自定义组件 -->
 <script src="../static/components/index.js"></script>
+
+<!-- KBar -->
+<script type="module">
+  import 'https://esm.run/cmd-dialog';
+  const dialog = document.querySelector('cmd-dialog');
+  const theme = localStorage.getItem("tablerTheme");
+  if (theme) {
+    dialog.theme = theme;
+  }
+  dialog.actions = [
+    {% for Menu in Menus %}
+      {% if Menu.page %}
+        {
+          id: '{{ Menu.page }}',
+          title: '{{ Menu.name }}',
+          img: `{{ Menu.icon|safe }}`,
+          onAction() {
+            navmenu('{{ Menu.page }}');
+          },
+        },
+      {% elif Menu.list %}
+        {% for SubMenu in Menu.list %}
+          {% if SubMenu.page %}
+            {
+              id: '{{ SubMenu.page }}',
+              title: '{{ SubMenu.name }}',
+              img: `{{ SubMenu.icon|safe }}`,
+              onAction() {
+                navmenu('{{ SubMenu.page }}')
+              },
+            },
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  ];
+</script>
 
 <!-- 用户自定义CSS -->
 <style>

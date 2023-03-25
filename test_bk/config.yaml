@@ -158,7 +158,7 @@ sync:
 # 【配置PT站点和检索信息】
 pt:
   # 【PT下载使用的客户端软件】：qbittorrent、transmission，需要配置qbittorrent或transmission对应的配置区域
-  search_indexer: prowlarr
+  search_indexer: builtin
   # 【搜索自动择优下载开关】：如开启则微信等渠道搜索后会自动择优选择一项下载，如不开启则需要手工点击进入WEB页面选择下载
   # 如没有配置app.domain或无公网环境建议开启，否则无法跳转WEB页面手工选择
   search_auto: true
@@ -175,6 +175,8 @@ pt:
 
 # 【配置Jackett检索器】
   ptrefresh_date_cron: '6'
+  indexer_sites:
+  - mteam
 jackett:
   # 【Jackett ApiKey】：Jackett配置页面右上角复制API Key
   api_key:
@@ -222,5 +224,10 @@ security:
 # 【实验室】
 laboratory:
   # 【识别增强】关键字猜想
-  search_keyword: true
+  search_keyword: false
   tmdb_cache_expire: true
+  search_tmdbweb: false
+  use_douban_titles: false
+  search_en_title: false
+  tmdb_proxy: false
+test: false

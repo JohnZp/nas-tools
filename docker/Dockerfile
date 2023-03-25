@@ -12,7 +12,6 @@ RUN apk update  \
     && pip install --upgrade pip setuptools wheel \
     && pip install cython \
     && pip install -r https://raw.githubusercontent.com/NAStool/nas-tools/master/requirements.txt \
-    && apk del libffi-dev \
     && npm install pm2 -g \
     && rm -rf /tmp/* /root/.cache /var/cache/apk/*
 ENV LANG="C.UTF-8" \
@@ -28,12 +27,17 @@ ENV LANG="C.UTF-8" \
     PUID=0 \
     PGID=0 \
     UMASK=000 \
-    WORKDIR="/nas-tools"
+    WORKDIR="/nas-tools" \
+    NT_HOME="/nt"
 WORKDIR ${WORKDIR}
-RUN python_ver=$(python3 -V | awk '{print $2}') \
+RUN mkdir ${NT_HOME} \
+    && addgroup -S nt -g 911 \
+    && adduser -S nt -G nt -h ${NT_HOME} -s /bin/bash -u 911 \
+    && python_ver=$(python3 -V | awk '{print $2}') \
     && echo "${WORKDIR}/" > /usr/lib/python${python_ver%.*}/site-packages/nas-tools.pth \
     && echo 'fs.inotify.max_user_watches=5242880' >> /etc/sysctl.conf \
     && echo 'fs.inotify.max_user_instances=5242880' >> /etc/sysctl.conf \
+    && echo "nt ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
     && git config --global pull.ff only \
     && git config --global http.version HTTP/1.1 \
     && git config --global http.postBuffer 524288000 \

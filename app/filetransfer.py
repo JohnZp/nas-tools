@@ -16,7 +16,7 @@ from app.media import Media, Category, Scraper
 from app.media.meta import MetaInfo
 from app.message import Message
 from app.plugins import EventManager
-from app.utils import EpisodeFormat, PathUtils, StringUtils, SystemUtils, ExceptionUtils
+from app.utils import EpisodeFormat, PathUtils, StringUtils, SystemUtils, ExceptionUtils, NumberUtils
 from app.utils.types import MediaType, SyncType, RmtMode, EventType, ProgressKey
 from config import RMT_SUBEXT, RMT_MEDIAEXT, RMT_FAVTYPE, RMT_MIN_FILESIZE, DEFAULT_MOVIE_FORMAT, \
     DEFAULT_TV_FORMAT, Config
@@ -648,15 +648,21 @@ class FileTransfer:
                     if file_exist_flag:
                         exist_filenum = exist_filenum + 1
                         if rmt_mode != RmtMode.SOFTLINK:
-                            if media.size > os.path.getsize(ret_file_path) and self._filesize_cover or udf_flag:
+                            orgin_file_size = os.path.getsize(ret_file_path)
+                            if media.size > orgin_file_size and self._filesize_cover or udf_flag:
+                                # 原文件
+                                old_file = ret_file_path
+                                # 拆分后缀
                                 ret_file_path, ret_file_ext = os.path.splitext(ret_file_path)
+                                # 新文件
                                 new_file = "%s%s" % (ret_file_path, file_ext)
-                                old_file = "%s%s" % (ret_file_path, ret_file_ext)
-                                log.info("【Rmt】文件 %s 已存在，覆盖为 %s" % (old_file, new_file))
+                                # 覆盖
+                                log.info(f"【Rmt】文件 {old_file} 已存在，原文件大小：{orgin_file_size}，新文件大小：{media.size}，覆盖为 {new_file} ...")
                                 ret = self.__transfer_file(file_item=file_item,
                                                            new_file=new_file,
                                                            rmt_mode=rmt_mode,
-                                                           over_flag=True, old_file=old_file)
+                                                           over_flag=True,
+                                                           old_file=old_file)
                                 if ret != 0:
                                     success_flag = False
                                     error_message = "文件转移失败，错误码 %s" % ret
@@ -1075,8 +1081,7 @@ class FileTransfer:
         # 有输入大小的，匹配第1个满足空间存储要求的
         if size:
             for path in dest_paths:
-                disk_free_size = SystemUtils.get_free_space_gb(path)
-                if float(disk_free_size) > float(size / 1024 / 1024 / 1024):
+                if SystemUtils.get_free_space(path) > NumberUtils.get_size_gb(size):
                     return path
         # 默认返回第1个
         return dest_paths[0]
@@ -1126,9 +1131,9 @@ class FileTransfer:
         en_title = Media().get_tmdb_en_title(media)
         media_format_dict = {
             "title": StringUtils.clear_file_name(media.title),
-            "en_title": StringUtils.clear_file_name(en_title, is_en=True),
-            "original_name": StringUtils.clear_file_name(os.path.splitext(media.org_string or "")[0], is_en=True),
-            "original_title": StringUtils.clear_file_name(media.original_title, is_en=True),
+            "en_title": StringUtils.clear_file_name(en_title),
+            "original_name": StringUtils.clear_file_name(os.path.splitext(media.org_string or "")[0]),
+            "original_title": StringUtils.clear_file_name(media.original_title),
             "name": StringUtils.clear_file_name(media.get_name()),
             "year": media.year,
             "edition": media.get_edtion_string() or None,

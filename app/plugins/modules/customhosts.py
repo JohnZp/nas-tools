@@ -1,9 +1,10 @@
 from python_hosts import Hosts, HostsEntry
 
 import log
+from app.plugins import EventHandler
 from app.plugins.modules._base import _IPluginModule
-from app.utils import SystemUtils
-from app.utils.ip_utils import IpUtils
+from app.utils import SystemUtils, IpUtils
+from app.utils.types import EventType
 
 
 class CustomHosts(_IPluginModule):
@@ -14,7 +15,7 @@ class CustomHosts(_IPluginModule):
     # 插件图标
     module_icon = "hosts.png"
     # 主题色
-    module_color = "bg-azure"
+    module_color = "bg-cyan"
     # 插件版本
     module_version = "1.0"
     # 插件作者
@@ -88,15 +89,30 @@ class CustomHosts(_IPluginModule):
             if isinstance(self._hosts, str):
                 self._hosts = str(self._hosts).split('\n')
             if self._enable and self._hosts:
+                # 排除空的host
+                new_hosts = []
+                for host in self._hosts:
+                    if host and host != '\n':
+                        new_hosts.append(host.replace("\n", "") + "\n")
+                self._hosts = new_hosts
+
                 # 添加到系统
                 error_flag, error_hosts = self.__add_hosts_to_system(self._hosts)
                 self._enable = self._enable and not error_flag
+
                 # 更新错误Hosts
                 self.update_config({
-                    "hosts": [] if not self._hosts or not self._hosts[0] else [host.replace("\n", "") + "\n" for host in self._hosts],
+                    "hosts": self._hosts,
                     "err_hosts": error_hosts,
                     "enable": self._enable
                 })
+
+    @EventHandler.register(EventType.CustomHostsReload)
+    def reload(self, event):
+        """
+        CloudflareSpeedTest优选ip后重载本插件
+        """
+        self.init_config(event.event_data)
 
     @staticmethod
     def __read_system_hosts():

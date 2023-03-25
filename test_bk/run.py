@@ -102,6 +102,7 @@ def start_service():
     log.console("开始启动服务...")
     # 启动服务
     WebAction.start_service()
+    WebAction.auth_user_level()
     # 监听配置文件变化
     # start_config_monitor()
 

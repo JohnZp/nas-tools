@@ -6,6 +6,7 @@ import os.path
 import re
 import shutil
 import signal
+from collections import defaultdict
 from urllib.parse import unquote
 
 import cn2an
@@ -36,7 +37,7 @@ from app.subscribe import Subscribe
 from app.sync import Sync
 from app.torrentremover import TorrentRemover
 from app.utils import StringUtils, EpisodeFormat, RequestUtils, PathUtils, \
-    SystemUtils, ExceptionUtils
+    SystemUtils, ExceptionUtils, Torrent
 from app.utils.types import RmtMode, OsType, SearchType, SyncType, MediaType, MovieTypes, TvTypes, \
     EventType, SystemConfigKey, RssType
 from config import RMT_MEDIAEXT, TMDB_IMAGE_W500_URL, RMT_SUBEXT, Config
@@ -99,6 +100,7 @@ class WebAction:
             "add_brushtask": self.__add_brushtask,
             "del_brushtask": self.__del_brushtask,
             "brushtask_detail": self.__brushtask_detail,
+            "update_brushtask_state": self.__update_brushtask_state,
             "name_test": self.__name_test,
             "rule_test": self.__rule_test,
             "net_test": self.__net_test,
@@ -124,6 +126,7 @@ class WebAction:
             "get_userrss_task": self.__get_userrss_task,
             "delete_userrss_task": self.__delete_userrss_task,
             "update_userrss_task": self.__update_userrss_task,
+            "check_userrss_task": self.__check_userrss_task,
             "get_rssparser": self.__get_rssparser,
             "delete_rssparser": self.__delete_rssparser,
             "update_rssparser": self.__update_rssparser,
@@ -217,7 +220,10 @@ class WebAction:
             "test_downloader": self.__test_downloader,
             "get_indexer_statistics": self.__get_indexer_statistics,
             "media_path_scrap": self.__media_path_scrap,
-            "get_default_rss_setting": self.get_default_rss_setting
+            "get_default_rss_setting": self.get_default_rss_setting,
+            "get_movie_rss_items": self.get_movie_rss_items,
+            "get_tv_rss_items": self.get_tv_rss_items,
+            "get_ical_events": self.get_ical_events,
         }
 
     def action(self, cmd, data=None):
@@ -308,7 +314,7 @@ class WebAction:
             os.kill(os.getpid(), getattr(signal, "SIGKILL", signal.SIGTERM))
         elif SystemUtils.is_synology():
             os.system(
-                "ps -ef | grep -v grep | grep 'python run.py'|awk '{print $2}'|xargs kill -9")
+                "sudo ps -ef | grep -v grep | grep 'python run.py'|awk '{print $2}'|xargs kill -9")
         else:
             os.system("pm2 restart NAStool")
 
@@ -578,20 +584,53 @@ class WebAction:
     @staticmethod
     def __download_torrent(data):
         """
-        从种子文件添加下载
+        从种子文件或者URL链接添加下载
+        files：文件地址的列表，urls：种子链接地址列表或者单个链接地址
         """
         dl_dir = data.get("dl_dir")
         dl_setting = data.get("dl_setting")
-        files = data.get("files")
-        if not files:
-            return {"code": -1, "msg": "没有种子文件"}
+        files = data.get("files") or []
+        urls = data.get("urls") or []
+        if not files and not urls:
+            return {"code": -1, "msg": "没有种子文件或者种子链接"}
+        # 下载种子
         for file_item in files:
             if not file_item:
                 continue
             file_name = file_item.get("upload", {}).get("filename")
             file_path = os.path.join(Config().get_temp_path(), file_name)
             media_info = Media().get_media_info(title=file_name)
-            media_info.site = "WEB"
+            if media_info:
+                media_info.site = "WEB"
+            # 添加下载
+            Downloader().download(media_info=media_info,
+                                  download_dir=dl_dir,
+                                  download_setting=dl_setting,
+                                  torrent_file=file_path,
+                                  in_from=SearchType.WEB,
+                                  user_name=current_user.username)
+        # 下载链接
+        if urls and not isinstance(urls, list):
+            urls = [urls]
+        for url in urls:
+            if not url:
+                continue
+            # 查询站点
+            site_info = Sites().get_sites(siteurl=url)
+            if not site_info:
+                return {"code": -1, "msg": "根据链接地址未匹配到站点"}
+            # 下载种子文件，并读取信息
+            file_path, _, _, _, retmsg = Torrent().get_torrent_info(
+                url=url,
+                cookie=site_info.get("cookie"),
+                ua=site_info.get("ua"),
+                proxy=site_info.get("proxy")
+            )
+            if not file_path:
+                return {"code": -1, "msg": f"下载种子文件失败： {retmsg}"}
+            media_info = Media().get_media_info(title=os.path.basename(file_path))
+            if media_info:
+                media_info.site = "WEB"
             # 添加下载
             Downloader().download(media_info=media_info,
                                   download_dir=dl_dir,
@@ -1170,27 +1209,29 @@ class WebAction:
                 self.restart_server()
         else:
             # 清除git代理
-            os.system("git config --global --unset http.proxy")
-            os.system("git config --global --unset https.proxy")
+            os.system("sudo git config --global --unset http.proxy")
+            os.system("sudo git config --global --unset https.proxy")
             # 设置git代理
             proxy = Config().get_proxies() or {}
             http_proxy = proxy.get("http")
             https_proxy = proxy.get("https")
             if http_proxy or https_proxy:
                 os.system(
-                    f"git config --global http.proxy {http_proxy or https_proxy}")
+                    f"sudo git config --global http.proxy {http_proxy or https_proxy}")
                 os.system(
-                    f"git config --global https.proxy {https_proxy or http_proxy}")
+                    f"sudo git config --global https.proxy {https_proxy or http_proxy}")
             # 清理
-            os.system("git clean -dffx")
+            os.system("sudo git clean -dffx")
             # 升级
             branch = "dev" if os.environ.get(
                 "NASTOOL_VERSION") == "dev" else "master"
-            os.system(f"git fetch --depth 1 origin {branch}")
-            os.system(f"git reset --hard origin/{branch}")
-            os.system("git submodule update --init --recursive")
+            os.system(f"sudo git fetch --depth 1 origin {branch}")
+            os.system(f"sudo git reset --hard origin/{branch}")
+            os.system("sudo git submodule update --init --recursive")
             # 安装依赖
-            os.system('pip install -r /nas-tools/requirements.txt')
+            os.system('sudo pip install -r /nas-tools/requirements.txt')
+            # 修复权限
+            os.system('sudo chown -R nt:nt /nas-tools')
             # 重启
             self.restart_server()
         return {"code": 0}
@@ -1367,7 +1408,7 @@ class WebAction:
         添加RSS订阅
         """
         _subscribe = Subscribe()
-        in_form = RssType.Manual if data.get("in_form") == "manual" else RssType.Auto
+        channel = RssType.Manual if data.get("in_form") == "manual" else RssType.Auto
         name = data.get("name")
         year = data.get("year")
         keyword = data.get("keyword")
@@ -1398,7 +1439,7 @@ class WebAction:
                 code, msg, media_info = _subscribe.add_rss_subscribe(mtype=mtype,
                                                                      name=name,
                                                                      year=year,
-                                                                     in_form=in_form,
+                                                                     channel=channel,
                                                                      keyword=keyword,
                                                                      season=sea,
                                                                      fuzzy_match=fuzzy_match,
@@ -1419,7 +1460,7 @@ class WebAction:
             code, msg, media_info = _subscribe.add_rss_subscribe(mtype=mtype,
                                                                  name=name,
                                                                  year=year,
-                                                                 in_form=in_form,
+                                                                 channel=channel,
                                                                  keyword=keyword,
                                                                  season=season,
                                                                  fuzzy_match=fuzzy_match,
@@ -1814,7 +1855,9 @@ class WebAction:
             if not release_date:
                 return {"code": 1, "retmsg": "上映日期不正确"}
             else:
-                return {"code": 0,
+                return {
+                    "code": 0,
+                    "events": [{
                         "type": "电视剧",
                         "title": title,
                         "start": release_date,
@@ -1823,7 +1866,8 @@ class WebAction:
                         "poster": poster_path,
                         "vote_average": vote_average,
                         "rssid": rssid
-                        }
+                    }]
+                }
         else:
             if tid:
                 tmdb_info = Media().get_tmdb_tv_season_detail(tmdbid=tid, season=season)
@@ -1918,6 +1962,7 @@ class WebAction:
         brushtask_downloader = data.get("brushtask_downloader")
         brushtask_totalsize = data.get("brushtask_totalsize")
         brushtask_state = data.get("brushtask_state")
+        brushtask_rssurl = data.get("brushtask_rssurl")
         brushtask_label = data.get("brushtask_label")
         brushtask_transfer = 'Y' if data.get("brushtask_transfer") else 'N'
         brushtask_sendmessage = 'Y' if data.get(
@@ -1965,6 +2010,7 @@ class WebAction:
             "name": brushtask_name,
             "site": brushtask_site,
             "free": brushtask_free,
+            "rssurl": brushtask_rssurl,
             "interval": brushtask_interval,
             "downloader": brushtask_downloader,
             "seed_size": brushtask_totalsize,
@@ -2004,6 +2050,25 @@ class WebAction:
             return {"code": 1, "task": {}}
 
         return {"code": 0, "task": brushtask}
+
+    def __update_brushtask_state(self, data):
+        """
+        批量暂停/开始刷流任务
+        """
+        try:
+            state = data.get("state")
+            task_ids = data.get("ids")
+            if state is not None:
+                if task_ids:
+                    for tid in task_ids:
+                        self.dbhelper.update_brushtask_state(state=state, tid=tid)
+                else:
+                    self.dbhelper.update_brushtask_state(state=state)
+            BrushTask().init_config()
+            return {"code": 0, "msg": ""}
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return {"code": 1, "msg": "刷流任务设置失败"}
 
     def __name_test(self, data):
         """
@@ -2128,7 +2193,9 @@ class WebAction:
             return {"code": 1, "msg": "查询参数错误"}
 
         resp = {"code": 0}
-        _, _, site, upload, download = SiteUserInfo().get_pt_site_statistics_history(data["days"] + 1)
+        _, _, site, upload, download = SiteUserInfo().get_pt_site_statistics_history(
+            data["days"] + 1, data.get("end_day", None)
+        )
 
         # 调整为dataset组织数据
         dataset = [["site", "upload", "download"]]
@@ -2635,6 +2702,7 @@ class WebAction:
             "state": data.get("state"),
             "save_path": data.get("save_path"),
             "download_setting": data.get("download_setting"),
+            "note": data.get("note"),
         }
         if uses == "D":
             params.update({
@@ -2657,6 +2725,26 @@ class WebAction:
             return {"code": 0}
         else:
             return {"code": 1}
+
+    def __check_userrss_task(self, data):
+        """
+        检测自定义订阅
+        """
+        try:
+            flag_dict = {"enable": "Y", "disable": "N"}
+            taskids = data.get("ids")
+            state = flag_dict.get(data.get("flag"))
+            if state is not None:
+                if taskids:
+                    for taskid in taskids:
+                        self.dbhelper.check_userrss_task(tid=taskid, state=state)
+                else:
+                    self.dbhelper.check_userrss_task(state=state)
+                RssChecker().init_config()
+            return {"code": 0, "msg": ""}
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return {"code": 1, "msg": "自定义订阅状态设置失败"}
 
     @staticmethod
     def __get_rssparser(data):
@@ -2968,9 +3056,12 @@ class WebAction:
             flag_dict = {"enable": 1, "disable": 0}
             ids_info = data.get("ids_info")
             enabled = flag_dict.get(data.get("flag"))
-            ids = [id_info.split("_")[1] for id_info in ids_info]
-            for wid in ids:
-                self.dbhelper.check_custom_word(wid=wid, enabled=enabled)
+            if not ids_info:
+                self.dbhelper.check_custom_word(enabled=enabled)
+            else:
+                ids = [id_info.split("_")[1] for id_info in ids_info]
+                for wid in ids:
+                    self.dbhelper.check_custom_word(wid=wid, enabled=enabled)
             WordsHelper().init_config()
             return {"code": 0, "msg": ""}
         except Exception as e:
@@ -2980,46 +3071,54 @@ class WebAction:
     def __export_custom_words(self, data):
         try:
             note = data.get("note")
-            ids_info = data.get("ids_info").split("@")
+            ids_info = data.get("ids_info")
             group_ids = []
             word_ids = []
-            for id_info in ids_info:
-                wid = id_info.split("_")
-                group_ids.append(wid[0])
-                word_ids.append(wid[1])
+            group_infos = []
+            word_infos = []
+            if ids_info:
+                ids_info = ids_info.split("@")
+                for id_info in ids_info:
+                    wid = id_info.split("_")
+                    group_ids.append(wid[0])
+                    word_ids.append(wid[1])
+                for group_id in group_ids:
+                    if group_id != "-1":
+                        group_info = self.dbhelper.get_custom_word_groups(gid=group_id)
+                        if group_info:
+                            group_infos.append(group_info[0])
+                for word_id in word_ids:
+                    word_info = self.dbhelper.get_custom_words(wid=word_id)
+                    if word_info:
+                        word_infos.append(word_info[0])
+            else:
+                group_infos = self.dbhelper.get_custom_word_groups()
+                word_infos = self.dbhelper.get_custom_words()
             export_dict = {}
-            for group_id in group_ids:
-                if group_id == "-1":
-                    export_dict["-1"] = {"id": -1,
-                                         "title": "通用",
-                                         "type": 1,
-                                         "words": {}, }
-                else:
-                    group_info = self.dbhelper.get_custom_word_groups(
-                        gid=group_id)
-                    if group_info:
-                        group_info = group_info[0]
-                        export_dict[str(group_info.ID)] = {"id": group_info.ID,
-                                                           "title": group_info.TITLE,
-                                                           "year": group_info.YEAR,
-                                                           "type": group_info.TYPE,
-                                                           "tmdbid": group_info.TMDBID,
-                                                           "season_count": group_info.SEASON_COUNT,
-                                                           "words": {}, }
-            for word_id in word_ids:
-                word_info = self.dbhelper.get_custom_words(wid=word_id)
-                if word_info:
-                    word_info = word_info[0]
-                    export_dict[str(word_info.GROUP_ID)]["words"][str(word_info.ID)] = {"id": word_info.ID,
-                                                                                        "replaced": word_info.REPLACED,
-                                                                                        "replace": word_info.REPLACE,
-                                                                                        "front": word_info.FRONT,
-                                                                                        "back": word_info.BACK,
-                                                                                        "offset": word_info.OFFSET,
-                                                                                        "type": word_info.TYPE,
-                                                                                        "season": word_info.SEASON,
-                                                                                        "regex": word_info.REGEX,
-                                                                                        "help": word_info.HELP, }
+            if not group_ids or "-1" in group_ids:
+                export_dict["-1"] = {"id": -1,
+                                     "title": "通用",
+                                     "type": 1,
+                                     "words": {}, }
+            for group_info in group_infos:
+                export_dict[str(group_info.ID)] = {"id": group_info.ID,
+                                                   "title": group_info.TITLE,
+                                                   "year": group_info.YEAR,
+                                                   "type": group_info.TYPE,
+                                                   "tmdbid": group_info.TMDBID,
+                                                   "season_count": group_info.SEASON_COUNT,
+                                                   "words": {}, }
+            for word_info in word_infos:
+                export_dict[str(word_info.GROUP_ID)]["words"][str(word_info.ID)] = {"id": word_info.ID,
+                                                                                    "replaced": word_info.REPLACED,
+                                                                                    "replace": word_info.REPLACE,
+                                                                                    "front": word_info.FRONT,
+                                                                                    "back": word_info.BACK,
+                                                                                    "offset": word_info.OFFSET,
+                                                                                    "type": word_info.TYPE,
+                                                                                    "season": word_info.SEASON,
+                                                                                    "regex": word_info.REGEX,
+                                                                                    "help": word_info.HELP, }
             export_string = json.dumps(export_dict) + "@@@@@@" + str(note)
             string = base64.b64encode(
                 export_string.encode("utf-8")).decode('utf-8')
@@ -3162,7 +3261,7 @@ class WebAction:
             code, msg, _ = Subscribe().add_rss_subscribe(mtype=mtype,
                                                          name=rssinfo[0].NAME,
                                                          year=rssinfo[0].YEAR,
-                                                         in_form=RssType.Auto,
+                                                         channel=RssType.Auto,
                                                          season=season,
                                                          mediaid=rssinfo[0].TMDBID,
                                                          total_ep=rssinfo[0].TOTAL,
@@ -3234,85 +3333,49 @@ class WebAction:
         查询媒体库存储空间
         """
         # 磁盘空间
+        UsedSapce = 0
         UsedPercent = 0
-        TotalSpaceList = []
         media = Config().get_config('media')
-        if media:
-            # 电影目录
-            movie_paths = media.get('movie_path')
-            if not isinstance(movie_paths, list):
-                movie_paths = [movie_paths]
-            movie_used, movie_total = 0, 0
-            for movie_path in movie_paths:
-                if not movie_path:
-                    continue
-                used, total = SystemUtils.get_used_of_partition(movie_path)
-                if "%s-%s" % (used, total) not in TotalSpaceList:
-                    TotalSpaceList.append("%s-%s" % (used, total))
-                    movie_used += used
-                    movie_total += total
-            # 电视目录
-            tv_paths = media.get('tv_path')
-            if not isinstance(tv_paths, list):
-                tv_paths = [tv_paths]
-            tv_used, tv_total = 0, 0
-            for tv_path in tv_paths:
-                if not tv_path:
-                    continue
-                used, total = SystemUtils.get_used_of_partition(tv_path)
-                if "%s-%s" % (used, total) not in TotalSpaceList:
-                    TotalSpaceList.append("%s-%s" % (used, total))
-                    tv_used += used
-                    tv_total += total
-            # 动漫目录
-            anime_paths = media.get('anime_path')
-            if not isinstance(anime_paths, list):
-                anime_paths = [anime_paths]
-            anime_used, anime_total = 0, 0
-            for anime_path in anime_paths:
-                if not anime_path:
-                    continue
-                used, total = SystemUtils.get_used_of_partition(anime_path)
-                if "%s-%s" % (used, total) not in TotalSpaceList:
-                    TotalSpaceList.append("%s-%s" % (used, total))
-                    anime_used += used
-                    anime_total += total
-            # 总空间
-            TotalSpaceAry = []
-            if movie_total not in TotalSpaceAry:
-                TotalSpaceAry.append(movie_total)
-            if tv_total not in TotalSpaceAry:
-                TotalSpaceAry.append(tv_total)
-            if anime_total not in TotalSpaceAry:
-                TotalSpaceAry.append(anime_total)
-            TotalSpace = sum(TotalSpaceAry)
+        # 电影目录
+        movie_paths = media.get('movie_path')
+        if not isinstance(movie_paths, list):
+            movie_paths = [movie_paths]
+        # 电视目录
+        tv_paths = media.get('tv_path')
+        if not isinstance(tv_paths, list):
+            tv_paths = [tv_paths]
+        # 动漫目录
+        anime_paths = media.get('anime_path')
+        if not isinstance(anime_paths, list):
+            anime_paths = [anime_paths]
+        # 总空间、剩余空间
+        TotalSpace, FreeSpace = SystemUtils.calculate_space_usage(movie_paths + tv_paths + anime_paths)
+        if TotalSpace:
             # 已使用空间
-            UsedSapceAry = []
-            if movie_used not in UsedSapceAry:
-                UsedSapceAry.append(movie_used)
-            if tv_used not in UsedSapceAry:
-                UsedSapceAry.append(tv_used)
-            if anime_used not in UsedSapceAry:
-                UsedSapceAry.append(anime_used)
-            UsedSapce = sum(UsedSapceAry)
-            # 电影电视使用百分比格式化
-            if TotalSpace:
-                UsedPercent = "%0.1f" % ((UsedSapce / TotalSpace) * 100)
+            UsedSapce = TotalSpace - FreeSpace
+            # 百分比格式化
+            UsedPercent = "%0.1f" % ((UsedSapce / TotalSpace) * 100)
             # 总剩余空间 格式化
-            FreeSpace = "{:,} TB".format(
-                round((TotalSpace - UsedSapce) / 1024 / 1024 / 1024 / 1024, 2))
+            if FreeSpace > 1024:
+                FreeSpace = "{:,} TB".format(round(FreeSpace / 1024, 2))
+            else:
+                FreeSpace = "{:,} GB".format(round(FreeSpace, 2))
             # 总使用空间 格式化
-            UsedSapce = "{:,} TB".format(
-                round(UsedSapce / 1024 / 1024 / 1024 / 1024, 2))
+            if UsedSapce > 1024:
+                UsedSapce = "{:,} TB".format(round(UsedSapce / 1024, 2))
+            else:
+                UsedSapce = "{:,} GB".format(round(UsedSapce, 2))
             # 总空间 格式化
-            TotalSpace = "{:,} TB".format(
-                round(TotalSpace / 1024 / 1024 / 1024 / 1024, 2))
+            if TotalSpace > 1024:
+                TotalSpace = "{:,} TB".format(round(TotalSpace / 1024, 2))
+            else:
+                TotalSpace = "{:,} GB".format(round(TotalSpace, 2))
 
-            return {"code": 0,
-                    "UsedPercent": UsedPercent,
-                    "FreeSpace": FreeSpace,
-                    "UsedSapce": UsedSapce,
-                    "TotalSpace": TotalSpace}
+        return {"code": 0,
+                "UsedPercent": UsedPercent,
+                "FreeSpace": FreeSpace,
+                "UsedSapce": UsedSapce,
+                "TotalSpace": TotalSpace}
 
     def get_transfer_statistics(self, data=None):
         """
@@ -3510,20 +3573,14 @@ class WebAction:
                         and filter_season not in torrent_filter.get("season"):
                     torrent_filter["season"].append(filter_season)
             else:
-                exist_flag = False
-                # 是否已存在
+                fav, rssid = 0, None
+                # 存在标志
                 if item.TMDBID:
-                    try:
-                        exist_flag = MediaServer().check_item_exists(
-                            mtype=mtype,
-                            title=item.TITLE,
-                            year=item.YEAR,
-                            tmdbid=item.TMDBID,
-                            season=int(filter_season.replace("S", "")) if filter_season else None
-                        )
-                    # One Piece S01-S21 E01-E1028 1999 1080p WEB-DL H.264 -@OPFansMaplesnow
-                    except Exception as e:
-                        print(str(e))
+                    fav, rssid = self.get_media_exists_flag(
+                        mtype=mtype,
+                        title=item.TITLE,
+                        year=item.YEAR,
+                        mediaid=item.TMDBID)
 
                 SearchResults[title_string] = {
                     "key": item.ID,
@@ -3537,7 +3594,8 @@ class WebAction:
                     "backdrop": item.IMAGE,
                     "poster": item.POSTER,
                     "overview": item.OVERVIEW,
-                    "exist": exist_flag,
+                    "fav": fav,
+                    "rssid": rssid,
                     "torrent_dict": {
                         SE_key: {
                             group_key: {
@@ -4098,6 +4156,8 @@ class WebAction:
         enabled = data.get("enabled")
         if cid:
             self.dbhelper.delete_message_client(cid=cid)
+        if int(interactive) == 1:
+            self.dbhelper.check_message_client(interactive=0, ctype=ctype)
         self.dbhelper.insert_message_client(name=name,
                                             ctype=ctype,
                                             config=config,
@@ -4417,22 +4477,25 @@ class WebAction:
                                              password=password).download_data()
         if not contents:
             return {"code": 1, "msg": retmsg}
+        # 整理数据,使用domain域名的最后两级作为分组依据
+        domain_groups = defaultdict(list)
+        for site, cookies in contents.items():
+            for cookie in cookies:
+                domain_parts = cookie["domain"].split(".")[-2:]
+                domain_key = tuple(domain_parts)
+                domain_groups[domain_key].append(cookie)
         success_count = 0
-        for domain, content_list in contents.items():
-            if domain.startswith('.'):
-                domain = domain[1:]
-            cookie_str = ""
-            for content in content_list:
-                cookie_str += content.get("name") + \
-                              "=" + content.get("value") + ";"
-            if not cookie_str:
+        for domain, content_list in domain_groups.items():
+            if not content_list:
                 continue
-            site_info = Sites().get_sites(siteurl=domain)
-            if not site_info:
-                continue
-            self.dbhelper.update_site_cookie_ua(tid=site_info.get("id"),
-                                                cookie=cookie_str)
-            success_count += 1
+            cookie_str = ";".join(
+                [f"{content['name']}={content['value']}" for content in content_list]
+            )
+            site_info = Sites().get_sites_by_suffix(".".join(domain))
+            if site_info:
+                self.dbhelper.update_site_cookie_ua(tid=site_info.get("id"),
+                                                    cookie=cookie_str)
+                success_count += 1
         if success_count:
             # 重载站点信息
             Sites().init_config()
@@ -4725,6 +4788,7 @@ class WebAction:
         enabled = data.get("enabled")
         transfer = data.get("transfer")
         only_nastool = data.get("only_nastool")
+        match_path = data.get("match_path")
         rmt_mode = data.get("rmt_mode")
         config = data.get("config")
         if not isinstance(config, str):
@@ -4738,6 +4802,7 @@ class WebAction:
                                         enabled=enabled,
                                         transfer=transfer,
                                         only_nastool=only_nastool,
+                                        match_path=match_path,
                                         rmt_mode=rmt_mode,
                                         config=config,
                                         download_dir=download_dir)
@@ -4762,17 +4827,20 @@ class WebAction:
             return {"code": 1}
         checked = data.get("checked")
         flag = data.get("flag")
-        enabled, transfer, only_nastool = None, None, None
+        enabled, transfer, only_nastool, match_path = None, None, None, None
         if flag == "enabled":
             enabled = 1 if checked else 0
         elif flag == "transfer":
             transfer = 1 if checked else 0
         elif flag == "only_nastool":
             only_nastool = 1 if checked else 0
+        elif flag == "match_path":
+            match_path = 1 if checked else 0
         self.dbhelper.check_downloader(did=did,
                                        enabled=enabled,
                                        transfer=transfer,
-                                       only_nastool=only_nastool)
+                                       only_nastool=only_nastool,
+                                       match_path=match_path)
         Downloader().init_config()
         return {"code": 0}
 
@@ -4839,3 +4907,66 @@ class WebAction:
         if default_rss_setting:
             return {"code": 0, "data": default_rss_setting}
         return {"code": 1}
+
+    @staticmethod
+    def get_movie_rss_items(data=None):
+        """
+        获取所有电影订阅项目
+        """
+        RssMovieItems = [
+            {
+                "id": movie.get("tmdbid"),
+                "rssid": movie.get("id")
+            } for movie in Subscribe().get_subscribe_movies().values() if movie.get("tmdbid")
+        ]
+        return {"code": 0, "result": RssMovieItems}
+
+    @staticmethod
+    def get_tv_rss_items(data=None):
+        """
+        获取所有电视剧订阅项目
+        """
+        # 电视剧订阅
+        RssTvItems = [
+            {
+                "id": tv.get("tmdbid"),
+                "rssid": tv.get("id"),
+                "season": int(str(tv.get('season')).replace("S", "")),
+                "name": tv.get("name"),
+            } for tv in Subscribe().get_subscribe_tvs().values() if tv.get('season') and tv.get("tmdbid")
+        ]
+        # 自定义订阅
+        RssTvItems += RssChecker().get_userrss_mediainfos()
+        # 电视剧订阅去重
+        Uniques = set()
+        UniqueTvItems = []
+        for item in RssTvItems:
+            unique = f"{item.get('id')}_{item.get('season')}"
+            if unique not in Uniques:
+                Uniques.add(unique)
+                UniqueTvItems.append(item)
+        return {"code": 0, "result": UniqueTvItems}
+
+    def get_ical_events(self, data=None):
+        """
+        获取ical日历事件
+        """
+        Events = []
+        MediaHandler = Media()
+        # 电影订阅
+        RssMovieItems = self.get_movie_rss_items().get("result")
+        for movie in RssMovieItems:
+            info = self.__movie_calendar_data(movie)
+            if info.get("id"):
+                Events.append(info)
+
+        # 电视剧订阅
+        RssTvItems = self.get_tv_rss_items().get("result")
+        for tv in RssTvItems:
+            infos = self.__tv_calendar_data(tv).get("events")
+            if infos and isinstance(infos, list):
+                for info in infos:
+                    if info.get("id"):
+                        Events.append(info)
+
+        return {"code": 0, "result": Events}

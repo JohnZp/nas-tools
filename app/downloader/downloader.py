@@ -16,7 +16,7 @@ from app.mediaserver import MediaServer
 from app.message import Message
 from app.plugins import EventManager
 from app.sites import Sites, SiteSubtitle
-from app.utils import Torrent, StringUtils, SystemUtils, ExceptionUtils
+from app.utils import Torrent, StringUtils, SystemUtils, ExceptionUtils, NumberUtils
 from app.utils.commons import singleton
 from app.utils.types import MediaType, DownloaderType, SearchType, RmtMode, EventType, SystemConfigKey
 from config import Config, PT_TAG, RMT_MEDIAEXT, PT_TRANSFER_INTERVAL
@@ -82,9 +82,10 @@ class Downloader:
                 "id": did,
                 "name": downloader_conf.NAME,
                 "type": dtype,
-                "enabled":  enabled,
+                "enabled": enabled,
                 "transfer": downloader_conf.TRANSFER,
                 "only_nastool": downloader_conf.ONLY_NASTOOL,
+                "match_path": downloader_conf.MATCH_PATH,
                 "rmt_mode": rmt_mode,
                 "rmt_mode_name": rmt_mode_name,
                 "config": config,
@@ -415,9 +416,11 @@ class Downloader:
             # 添加下载
             print_url = content if isinstance(content, str) else url
             if is_paused:
-                log.info(f"【Downloader】下载器 {downloader_name} 添加任务并暂停：%s，目录：%s，Url：%s" % (title, download_dir, print_url))
+                log.info(f"【Downloader】下载器 {downloader_name} 添加任务并暂停：%s，目录：%s，Url：%s" % (
+                    title, download_dir, print_url))
             else:
-                log.info(f"【Downloader】下载器 {downloader_name} 添加任务：%s，目录：%s，Url：%s" % (title, download_dir, print_url))
+                log.info(f"【Downloader】下载器 {downloader_name} 添加任务：%s，目录：%s，Url：%s" % (
+                    title, download_dir, print_url))
             # 下载ID
             download_id = None
             downloader_type = downloader.get_type()
@@ -514,6 +517,7 @@ class Downloader:
                 downloader_conf = self.get_downloader_conf(downloader_id)
                 name = downloader_conf.get("name")
                 only_nastool = downloader_conf.get("only_nastool")
+                match_path = downloader_conf.get("match_path")
                 rmt_mode = ModuleConf.RMT_MODES.get(downloader_conf.get("rmt_mode"))
                 if only_nastool:
                     tag = [PT_TAG]
@@ -523,7 +527,7 @@ class Downloader:
                 _client = self.__get_client(downloader_id)
                 if not _client:
                     continue
-                trans_tasks = _client.get_transfer_task(tag=tag)
+                trans_tasks = _client.get_transfer_task(tag=tag, match_path=match_path)
                 if trans_tasks:
                     log.info(f"【Downloader】下载器 {name} 开始转移下载文件...")
                 else:
@@ -1164,8 +1168,11 @@ class Downloader:
                 if (attr.get("container_path") or attr.get("save_path")) \
                         and os.path.exists(attr.get("container_path") or attr.get("save_path")) \
                         and media.size \
-                        and float(SystemUtils.get_free_space_gb(attr.get("container_path") or attr.get("save_path"))) \
-                        < float(int(StringUtils.num_filesize(media.size)) / 1024 / 1024 / 1024):
+                        and SystemUtils.get_free_space(
+                    attr.get("container_path") or attr.get("save_path")
+                ) < NumberUtils.get_size_gb(
+                    StringUtils.num_filesize(media.size)
+                ):
                     continue
                 return {"path": attr.get("save_path"), "label": attr.get("label")}
         return {"path": None, "label": None}

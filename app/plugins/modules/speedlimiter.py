@@ -1,3 +1,5 @@
+import time
+
 from app.downloader import Downloader
 from app.mediaserver import MediaServer
 from app.plugins import EventHandler
@@ -132,6 +134,25 @@ class SpeedLimiter(_IPluginModule):
                         },
                     ]
                 ]
+            },
+            {
+                'type': 'details',
+                'summary': '任务间隔',
+                'tooltip': '设置任务执行间隔,单位为秒，默认时间300秒；应优先通过配置Emby/Jellyfin/Plex的webhook发送播放事件给NAStool来触发自动限速，而非定时执行检查',
+                'content': [
+                    [
+                        {
+                            'required': "",
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'interval',
+                                    'placeholder': '300'
+                                }
+                            ]
+                        }
+                    ]
+                ]
             }
         ]
 
@@ -176,6 +197,9 @@ class SpeedLimiter(_IPluginModule):
             # 不限速地址
             self._unlimited_ips["ipv4"] = config.get("ipv4") or "0.0.0.0/0"
             self._unlimited_ips["ipv6"] = config.get("ipv6") or "::/0"
+
+            # 任务时间间隔
+            self._interval = int(config.get("interval") or "300")
 
             # 下载器
             self._limited_downloader_ids = config.get("downloaders") or []
@@ -291,6 +315,9 @@ class SpeedLimiter(_IPluginModule):
 
         if _mediaserver_type != self._mediaserver.get_type():
             return
+        # plex的webhook时尝试sleep一段时间,以保证get_playing_sessions获取到正确的值
+        if not time_check and _mediaserver_type == MediaServerType.PLEX:
+            time.sleep(3)
         # 当前播放的会话
         playing_sessions = self._mediaserver.get_playing_sessions()
         # 本次是否限速

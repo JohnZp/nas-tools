@@ -93,6 +93,7 @@ class ModuleConf(object):
                 "name": "微信",
                 "img_url": "../static/img/message/wechat.png",
                 "search_type": SearchType.WX,
+                "max_length": 2048,
                 "config": {
                     "corpid": {
                         "id": "wechat_corpid",
@@ -531,8 +532,8 @@ class ModuleConf(object):
                 "host": {
                     "id": "qbittorrent_host",
                     "required": True,
-                    "title": "IP地址",
-                    "tooltip": "配置IP地址，如为https则需要增加https://前缀",
+                    "title": "地址",
+                    "tooltip": "配置IP地址或域名，如为https则需要增加https://前缀",
                     "type": "text",
                     "placeholder": "127.0.0.1"
                 },
@@ -583,8 +584,8 @@ class ModuleConf(object):
                 "host": {
                     "id": "transmission_host",
                     "required": True,
-                    "title": "IP地址",
-                    "tooltip": "配置IP地址，如为https则需要增加https://前缀",
+                    "title": "地址",
+                    "tooltip": "配置IP地址或域名，如为https则需要增加https://前缀",
                     "type": "text",
                     "placeholder": "127.0.0.1"
                 },
@@ -681,7 +682,7 @@ class ModuleConf(object):
                     "id": "plex.token",
                     "required": False,
                     "title": "X-Plex-Token",
-                    "tooltip": "Plex网页Cookie中的X-Plex-Token，通过浏览器F12->网络中获取，如填写将优先使用；Token与服务器名称、用户名及密码 二选一，推荐使用Token，连接速度更快",
+                    "tooltip": "Plex网页Url中的X-Plex-Token，通过浏览器F12->网络从请求URL中获取，如填写将优先使用；Token与服务器名称、用户名及密码 二选一，推荐使用Token，连接速度更快",
                     "type": "text",
                     "placeholder": "X-Plex-Token与其它认证信息二选一"
                 },
