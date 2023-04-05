@@ -1,6 +1,5 @@
 import os
 
-import log
 from app.filetransfer import FileTransfer
 from app.media import Category
 from app.mediaserver import MediaServer
@@ -19,11 +18,13 @@ class MovieLike(_IPluginModule):
     # 插件图标
     module_icon = "like.jpg"
     # 主题色
-    module_color = "bg-pink"
+    module_color = "#E4003F"
     # 插件版本
     module_version = "1.0"
     # 插件作者
     module_author = "jxxghp"
+    # 作者主页
+    author_url = "https://github.com/jxxghp"
     # 插件配置项ID前缀
     module_config_prefix = "movielike_"
     # 加载顺序
@@ -115,7 +116,7 @@ class MovieLike(_IPluginModule):
         if not item_path:
             return
         if not os.path.exists(item_path):
-            log.error(f"【Plugin】{item_path} 文件不存在")
+            self.warn(f"{item_path} 文件不存在")
             return
         # 文件转为目录
         if os.path.isdir(item_path):
@@ -138,12 +139,12 @@ class MovieLike(_IPluginModule):
         new_path = os.path.join(movie_path, self._dir_name, movie_name)
         # 开始转移文件
         if os.path.exists(org_path):
-            log.info(f"【Plugin】开始转移文件 {org_path} 到 {new_path} ...")
+            self.info(f"开始转移文件 {org_path} 到 {new_path} ...")
             if os.path.exists(new_path):
-                log.info(f"【Plugin】目录 {new_path} 已存在")
+                self.info(f"目录 {new_path} 已存在")
                 return
             ret, retmsg = SystemUtils.move(org_path, new_path)
             if ret != 0:
-                log.error(f"【Plugin】{retmsg}")
+                self.error(f"{retmsg}")
         else:
-            log.error(f"【Plugin】{org_path} 目录不存在")
+            self.warn(f"{org_path} 目录不存在")

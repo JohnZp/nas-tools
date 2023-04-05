@@ -1,16 +1,15 @@
 import time
 
+from apscheduler.schedulers.background import BackgroundScheduler
+
 from app.downloader import Downloader
+from app.helper.security_helper import SecurityHelper
 from app.mediaserver import MediaServer
 from app.plugins import EventHandler
 from app.plugins.modules._base import _IPluginModule
 from app.utils import ExceptionUtils
-from app.utils.types import DownloaderType, MediaServerType, EventType
-from app.helper.security_helper import SecurityHelper
-from apscheduler.schedulers.background import BackgroundScheduler
+from app.utils.types import MediaServerType, EventType
 from config import Config
-
-import log
 
 
 class SpeedLimiter(_IPluginModule):
@@ -21,11 +20,13 @@ class SpeedLimiter(_IPluginModule):
     # 插件图标
     module_icon = "SpeedLimiter.jpg"
     # 主题色
-    module_color = "bg-blue"
+    module_color = "#183883"
     # 插件版本
     module_version = "1.0"
     # 插件作者
     module_author = "Shurelol"
+    # 作者主页
+    author_url = "https://github.com/Shurelol"
     # 插件配置项ID前缀
     module_config_prefix = "speedlimit_"
     # 加载顺序
@@ -219,7 +220,7 @@ class SpeedLimiter(_IPluginModule):
                                     seconds=self._interval)
             self._scheduler.print_jobs()
             self._scheduler.start()
-            log.info("播放限速服务启动")
+            self.info("播放限速服务启动")
 
     def get_state(self):
         return self._limit_enabled
@@ -251,7 +252,7 @@ class SpeedLimiter(_IPluginModule):
                 upload_limit=upload_limit
             )
             if not self._limit_flag:
-                log.info(f"【Plugin】下载器 {limited_downloader_conf.get('name')} 开始限速")
+                self.info(f"下载器 {limited_downloader_conf.get('name')} 开始限速")
         self._limit_flag = True
 
     def __stop(self, limited_downloader_confs=None):
@@ -267,7 +268,7 @@ class SpeedLimiter(_IPluginModule):
                 upload_limit=0
             )
             if self._limit_flag:
-                log.info(f"【Plugin】下载器 {limited_downloader_conf.get('name')} 停止限速")
+                self.info(f"下载器 {limited_downloader_conf.get('name')} 停止限速")
         self._limit_flag = False
 
     @EventHandler.register(EventType.EmbyWebhook)

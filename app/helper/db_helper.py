@@ -301,6 +301,23 @@ class DbHelper:
         """
         return self._db.query(TRANSFERHISTORY).filter(TRANSFERHISTORY.ID == int(logid)).first()
 
+    def get_transfer_info_by(self, tmdbid, season=None, season_episode=None):
+        """
+        据tmdbid、season、season_episode查询转移记录
+        """
+        # 电视剧所有季集｜电影
+        if tmdbid and not season and not season_episode:
+            return self._db.query(TRANSFERHISTORY).filter(TRANSFERHISTORY.TMDBID == int(tmdbid)).all()
+        # 电视剧某季
+        if tmdbid and season:
+            season = f"%{season}%"
+            return self._db.query(TRANSFERHISTORY).filter(TRANSFERHISTORY.TMDBID == int(tmdbid),
+                                                          TRANSFERHISTORY.SEASON_EPISODE.like(season)).all()
+        # 电视剧某季某集
+        if tmdbid and season_episode:
+            return self._db.query(TRANSFERHISTORY).filter(TRANSFERHISTORY.TMDBID == int(tmdbid),
+                                                          TRANSFERHISTORY.SEASON_EPISODE == season_episode).all()
+
     def is_transfer_history_exists_by_source_full_path(self, source_full_path):
         """
         据源文件的全路径查询识别转移记录
@@ -764,6 +781,8 @@ class DbHelper:
                          filter_pix=None,
                          filter_team=None,
                          filter_rule=None,
+                         filter_include=None,
+                         filter_exclude=None,
                          save_path=None,
                          download_setting=-1,
                          fuzzy_match=0,
@@ -795,6 +814,8 @@ class DbHelper:
             FILTER_PIX=filter_pix,
             FILTER_RULE=filter_rule,
             FILTER_TEAM=filter_team,
+            FILTER_INCLUDE=filter_include,
+            FILTER_EXCLUDE=filter_exclude,
             SAVE_PATH=save_path,
             DOWNLOAD_SETTING=download_setting,
             FUZZY_MATCH=fuzzy_match,
@@ -960,6 +981,8 @@ class DbHelper:
                       filter_pix=None,
                       filter_team=None,
                       filter_rule=None,
+                      filter_include=None,
+                      filter_exclude=None,
                       save_path=None,
                       download_setting=-1,
                       total_ep=None,
@@ -998,6 +1021,8 @@ class DbHelper:
             FILTER_PIX=filter_pix,
             FILTER_RULE=filter_rule,
             FILTER_TEAM=filter_team,
+            FILTER_INCLUDE=filter_include,
+            FILTER_EXCLUDE=filter_exclude,
             SAVE_PATH=save_path,
             DOWNLOAD_SETTING=download_setting,
             FUZZY_MATCH=fuzzy_match,

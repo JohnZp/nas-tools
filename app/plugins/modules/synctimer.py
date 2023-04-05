@@ -1,7 +1,6 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-import log
 from app.plugins.modules._base import _IPluginModule
 from app.sync import Sync
 from config import Config
@@ -15,11 +14,13 @@ class SyncTimer(_IPluginModule):
     # 插件图标
     module_icon = "synctimer.png"
     # 主题色
-    module_color = "bg-green"
+    module_color = "#53BA48"
     # 插件版本
     module_version = "1.0"
     # 插件作者
     module_author = "jxxghp"
+    # 作者主页
+    author_url = "https://github.com/jxxghp"
     # 插件配置项ID前缀
     module_config_prefix = "synctimer_"
     # 加载顺序
@@ -76,7 +77,7 @@ class SyncTimer(_IPluginModule):
                                     trigger=CronTrigger.from_crontab(self._cron))
             self._scheduler.print_jobs()
             self._scheduler.start()
-            log.info(f"目录定时同步服务启动，周期：{self._cron}")
+            self.info(f"目录定时同步服务启动，周期：{self._cron}")
 
     def get_state(self):
         return True if self._cron else False
@@ -85,9 +86,9 @@ class SyncTimer(_IPluginModule):
         """
         开始同步
         """
-        log.info("【Plugin】开始定时同步 ...")
+        self.info("开始定时同步 ...")
         self._sync.transfer_all_sync()
-        log.info("【Plugin】定时同步完成")
+        self.info("定时同步完成")
 
     def stop_service(self):
         """

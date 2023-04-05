@@ -1,4 +1,5 @@
 import json
+import time
 import traceback
 
 import jsonpath
@@ -318,7 +319,7 @@ class RssChecker(object):
                                                        year=media_info.year,
                                                        season=media_info.get_season_string()):
                         log.info(
-                            f"【RssChecker】{media_info.title} ({media_info.year}) {media_info.get_season_string()} 已订阅过")
+                            f"【RssChecker】{media_info.get_title_string()}{media_info.get_season_string()} 已订阅过")
                         continue
                     # 添加处理历史
                     self.dbhelper.insert_rss_torrents(media_info)
@@ -376,6 +377,9 @@ class RssChecker(object):
         counter = len(rss_download_torrents) + len(rss_subscribe_torrents) + len(rss_search_torrents)
         if counter:
             self.dbhelper.update_userrss_task_info(taskid, counter)
+            taskinfo["counter"] = int(taskinfo.get("counter")) + counter \
+                if str(taskinfo.get("counter")).isdigit() else counter
+            taskinfo["update_time"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
 
     def __parse_userrss_result(self, taskinfo):
         """

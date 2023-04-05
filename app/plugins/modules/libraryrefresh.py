@@ -3,8 +3,6 @@ from app.plugins import EventHandler
 from app.plugins.modules._base import _IPluginModule
 from app.utils.types import EventType
 
-import log
-
 
 class LibraryRefresh(_IPluginModule):
     # 插件名称
@@ -14,11 +12,13 @@ class LibraryRefresh(_IPluginModule):
     # 插件图标
     module_icon = "refresh.png"
     # 主题色
-    module_color = "bg-teal"
+    module_color = "#32BEA6"
     # 插件版本
     module_version = "1.0"
     # 插件作者
     module_author = "jxxghp"
+    # 作者主页
+    author_url = "https://github.com/jxxghp"
     # 插件配置项ID前缀
     module_config_prefix = "libraryrefresh_"
     # 加载顺序
@@ -76,7 +76,7 @@ class LibraryRefresh(_IPluginModule):
         year = media_info.get("year")
         media_name = f"{title} ({year})" if year else title
         mediaserver_type = self.mediaserver.get_type().value
-        log.info(f"【Plugin】媒体服务器 {mediaserver_type} 刷新媒体 {media_name}")
+        self.info(f"媒体服务器 {mediaserver_type} 刷新媒体 {media_name}")
         self.mediaserver.refresh_library_by_items([{
             "title": title,
             "year": year,

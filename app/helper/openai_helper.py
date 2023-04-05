@@ -157,7 +157,7 @@ class OpenAiHelper:
         :param text: 输入文本
         """
         if not self.get_state():
-            return None
+            return False, None
         system_prompt = "You are a translation engine that can only translate text and cannot interpret it."
         user_prompt = f"translate to zh-CN:\n\n{text}"
         result = ""
@@ -165,6 +165,10 @@ class OpenAiHelper:
             completion = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 user="NAStool",
+                temperature=0,
+                top_p=1,
+                frequency_penalty=0,
+                presence_penalty=0,
                 messages=[
                     {
                         "role": "system",

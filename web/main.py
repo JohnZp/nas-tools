@@ -14,12 +14,14 @@ from math import floor
 from pathlib import Path
 from threading import Lock
 from urllib import parse
+from urllib.parse import unquote
 
 from flask import Flask, request, json, render_template, make_response, session, send_from_directory, send_file, \
     redirect, Response
 from flask_compress import Compress
 from flask_login import LoginManager, login_user, login_required, current_user
 from ics import Calendar, Event
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import log
 from app.brushtask import BrushTask
@@ -31,7 +33,7 @@ from app.indexer import Indexer
 from app.media.meta import MetaInfo
 from app.mediaserver import MediaServer
 from app.message import Message
-from app.plugins import EventManager, PluginManager
+from app.plugins import EventManager
 from app.rsschecker import RssChecker
 from app.sites import Sites, SiteUserInfo
 from app.subscribe import Subscribe
@@ -53,6 +55,7 @@ ConfigLock = Lock()
 
 # Flask App
 App = Flask(__name__)
+App.wsgi_app = ProxyFix(App.wsgi_app)
 App.config['JSON_AS_ASCII'] = False
 App.secret_key = os.urandom(24)
 App.permanent_session_lifetime = datetime.timedelta(days=30)
@@ -123,15 +126,21 @@ def login():
         """
         跳转到导航页面
         """
-        return redirect('/web?next=' + GoPage)
+        if GoPage and GoPage != 'web':
+            return redirect('/web#' + GoPage)
+        else:
+            return redirect('/web')
 
     def redirect_to_login(errmsg=''):
         """
         跳转到登录页面
         """
+        image_code, img_title, img_link = get_login_wallpaper()
         return render_template('login.html',
                                GoPage=GoPage,
-                               LoginWallpaper=get_login_wallpaper(),
+                               image_code=image_code,
+                               img_title=img_title,
+                               img_link=img_link,
                                err_msg=errmsg)
 
     # 登录认证
@@ -711,18 +720,6 @@ def service():
         else:
             Services.pop('sync')
 
-    # 豆瓣同步
-    if "douban" in Services:
-        interval = Config().get_config('douban').get('interval')
-        if interval:
-            interval = "%s 小时" % interval
-            Services['douban'].update({
-                'state': 'ON',
-                'time': interval,
-            })
-        else:
-            Services.pop('douban')
-
     return render_template("service.html",
                            Count=len(Services),
                            RuleGroups=RuleGroups,
@@ -864,17 +861,6 @@ def directorysync():
                            RmtModeDict=RmtModeDict)
 
 
-# 豆瓣页面
-@App.route('/douban', methods=['POST', 'GET'])
-@login_required
-def douban():
-    DoubanHistory = WebAction().get_douban_history().get("result")
-    return render_template("setting/douban.html",
-                           Config=Config().get_config(),
-                           HistoryCount=len(DoubanHistory),
-                           DoubanHistory=DoubanHistory)
-
-
 # 下载器页面
 @App.route('/downloader', methods=['POST', 'GET'])
 @login_required
@@ -1013,9 +999,10 @@ def rss_parser():
 @App.route('/plugin', methods=['POST', 'GET'])
 @login_required
 def plugin():
-    Plugins = PluginManager().get_plugins_conf(current_user.level)
+    Plugins = WebAction().get_plugins_conf().get("result")
     return render_template("setting/plugin.html",
-                           Plugins=Plugins)
+                           Plugins=Plugins,
+                           Count=len(Plugins))
 
 
 # 事件响应
@@ -1040,7 +1027,7 @@ def dirlist():
     r = ['<ul class="jqueryFileTree" style="display: none;">']
     try:
         r = ['<ul class="jqueryFileTree" style="display: none;">']
-        in_dir = request.form.get('dir')
+        in_dir = unquote(request.form.get('dir'))
         ft = request.form.get("filter")
         if not in_dir or in_dir == "/":
             if SystemUtils.get_system() == OsType.WINDOWS:
@@ -1186,6 +1173,7 @@ def wechat():
 
 # Plex Webhook
 @App.route('/plex', methods=['POST'])
+@require_auth(force=False)
 def plex_webhook():
     if not SecurityHelper().check_mediaserver_ip(request.remote_addr):
         log.warn(f"非法IP地址的媒体服务器消息通知：{request.remote_addr}")
@@ -1202,6 +1190,7 @@ def plex_webhook():
 
 # Jellyfin Webhook
 @App.route('/jellyfin', methods=['POST'])
+@require_auth(force=False)
 def jellyfin_webhook():
     if not SecurityHelper().check_mediaserver_ip(request.remote_addr):
         log.warn(f"非法IP地址的媒体服务器消息通知：{request.remote_addr}")
@@ -1216,13 +1205,19 @@ def jellyfin_webhook():
     return 'Ok'
 
 
-@App.route('/emby', methods=['POST'])
 # Emby Webhook
+@App.route('/emby', methods=['GET', 'POST'])
+@require_auth(force=False)
 def emby_webhook():
     if not SecurityHelper().check_mediaserver_ip(request.remote_addr):
         log.warn(f"非法IP地址的媒体服务器消息通知：{request.remote_addr}")
         return '不允许的IP地址请求'
-    request_json = json.loads(request.form.get('data', {}))
+    if request.method == 'POST':
+        log.debug("Emby Webhook data: %s" % str(request.form.get('data', {})))
+        request_json = json.loads(request.form.get('data', {}))
+    else:
+        log.debug("Emby Webhook data: %s" % str(dict(request.args)))
+        request_json = dict(request.args)
     log.debug("收到Emby Webhook报文：%s" % str(request_json))
     # 发送消息
     ThreadHelper().start_thread(MediaServer().webhook_message_handler,
@@ -1233,7 +1228,8 @@ def emby_webhook():
 
 
 # Telegram消息响应
-@App.route('/telegram', methods=['POST', 'GET'])
+@App.route('/telegram', methods=['POST'])
+@require_auth(force=False)
 def telegram():
     """
     {
@@ -1296,7 +1292,8 @@ def telegram():
 
 
 # Synology Chat消息响应
-@App.route('/synology', methods=['POST', 'GET'])
+@App.route('/synology', methods=['POST'])
+@require_auth(force=False)
 def synology():
     """
     token: bot token
@@ -1334,6 +1331,7 @@ def synology():
 
 # Slack消息响应
 @App.route('/slack', methods=['POST'])
+@require_auth(force=False)
 def slack():
     """
     # 消息
@@ -1440,19 +1438,19 @@ def slack():
     msg_json = request.get_json()
     if msg_json:
         if msg_json.get("type") == "message":
-            channel = msg_json.get("client")
+            userid = msg_json.get("user")
             text = msg_json.get("text")
-            username = ""
+            username = msg_json.get("user")
         elif msg_json.get("type") == "block_actions":
-            channel = msg_json.get("client", {}).get("id")
+            userid = msg_json.get("user", {}).get("id")
             text = msg_json.get("actions")[0].get("value")
             username = msg_json.get("user", {}).get("name")
         elif msg_json.get("type") == "event_callback":
-            channel = msg_json.get("event", {}).get("client")
+            userid = msg_json.get("user", {}).get("id")
             text = re.sub(r"<@[0-9A-Z]+>", "", msg_json.get("event", {}).get("text"), flags=re.IGNORECASE).strip()
             username = ""
         elif msg_json.get("type") == "shortcut":
-            channel = ""
+            userid = msg_json.get("user", {}).get("id")
             text = msg_json.get("callback_id")
             username = msg_json.get("user", {}).get("username")
         else:
@@ -1460,13 +1458,13 @@ def slack():
         log.info(f"收到Slack消息：username={username}, text={text}")
         WebAction().handle_message_job(msg=text,
                                        in_from=SearchType.SLACK,
-                                       user_id=channel,
+                                       user_id=userid,
                                        user_name=username)
     return "Ok"
 
 
 # Jellyseerr Overseerr订阅接口
-@App.route('/subscribe', methods=['POST', 'GET'])
+@App.route('/subscribe', methods=['POST'])
 @require_auth
 def subscribe():
     """
@@ -1617,6 +1615,7 @@ def upload():
 
 
 @App.route('/ical')
+@require_auth(force=False)
 def ical():
     ICal = Calendar()
     RssItems = WebAction().get_ical_events().get("result")

@@ -1,8 +1,5 @@
-from app.plugins.modules._base import _IPluginModule
 from app.media.meta.release_groups import ReleaseGroupsMatcher
-from config import Config
-
-import log
+from app.plugins.modules._base import _IPluginModule
 
 
 class CustomReleaseGroups(_IPluginModule):
@@ -13,11 +10,13 @@ class CustomReleaseGroups(_IPluginModule):
     # 插件图标
     module_icon = "teamwork.png"
     # 主题色
-    module_color = "bg-cyan"
+    module_color = "#00ADEF"
     # 插件版本
     module_version = "1.0"
     # 插件作者
     module_author = "Shurelol"
+    # 作者主页
+    author_url = "https://github.com/Shurelol"
     # 插件配置项ID前缀
     module_config_prefix = "customreleasegroups_"
     # 加载顺序
@@ -70,7 +69,7 @@ class CustomReleaseGroups(_IPluginModule):
                 if custom_release_groups:
                     self._release_groups_matcher.update_custom(custom_release_groups)
                     self._custom_release_groups = custom_release_groups
-                    log.info("【Plugin】自定义制作组/字幕组已加载")
+                    self.info("自定义制作组/字幕组已加载")
 
     def get_state(self):
         return True if self._custom_release_groups else False

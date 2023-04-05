@@ -9,8 +9,7 @@ from werkzeug.security import generate_password_hash
 import log
 from app.helper import DbHelper
 from app.plugins import PluginManager
-from app.utils import ConfigLoadCache
-from app.utils import ExceptionUtils
+from app.utils import ConfigLoadCache, ExceptionUtils, StringUtils
 from app.utils.commons import INSTANCES
 from config import Config
 
@@ -80,6 +79,11 @@ def update_config():
     if login_password and not login_password.startswith("[hash]"):
         _config['app']['login_password'] = "[hash]%s" % generate_password_hash(
             login_password)
+        overwrite_cofig = True
+
+    # API密钥初始化
+    if not _config.get("security", {}).get("api_key"):
+        _config['security']['api_key'] = StringUtils.generate_random_str(32)
         overwrite_cofig = True
 
     # 字幕兼容旧配置
@@ -206,6 +210,28 @@ def update_config():
     try:
         if "ptrefresh_date_cron" not in _config['pt']:
             _config['pt']['ptrefresh_date_cron'] = '6'
+            overwrite_cofig = True
+    except Exception as e:
+        ExceptionUtils.exception_traceback(e)
+
+    # 豆瓣配置转为插件
+    try:
+        douban = Config().get_config('douban')
+        if douban:
+            _enable = True if douban.get("users") and douban.get("interval") and douban.get("types") else False
+            PluginManager().save_plugin_config(pid="DoubanSync", conf={
+                "onlyonce": False,
+                "enable": _enable,
+                "interval": douban.get("interval"),
+                "auto_search": douban.get("auto_search"),
+                "auto_rss": douban.get("auto_rss"),
+                "cookie": douban.get("cookie"),
+                "users": douban.get("users"),
+                "days": douban.get("days"),
+                "types": douban.get("types")
+            })
+            # 删除旧配置
+            _config.pop("douban")
             overwrite_cofig = True
     except Exception as e:
         ExceptionUtils.exception_traceback(e)

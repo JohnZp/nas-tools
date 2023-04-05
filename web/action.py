@@ -17,7 +17,6 @@ from werkzeug.security import generate_password_hash
 import log
 from app.brushtask import BrushTask
 from app.conf import SystemConfig, ModuleConf
-from app.doubansync import DoubanSync
 from app.downloader import Downloader
 from app.filetransfer import FileTransfer
 from app.filter import Filter
@@ -40,7 +39,7 @@ from app.utils import StringUtils, EpisodeFormat, RequestUtils, PathUtils, \
     SystemUtils, ExceptionUtils, Torrent
 from app.utils.types import RmtMode, OsType, SearchType, SyncType, MediaType, MovieTypes, TvTypes, \
     EventType, SystemConfigKey, RssType
-from config import RMT_MEDIAEXT, TMDB_IMAGE_W500_URL, RMT_SUBEXT, Config
+from config import RMT_MEDIAEXT, RMT_SUBEXT, Config
 from web.backend.search_torrents import search_medias_for_web, search_media_by_message
 from web.backend.user import User
 from web.backend.web_utils import WebUtils
@@ -65,7 +64,7 @@ class WebAction:
             "del_unknown_path": self.__del_unknown_path,
             "rename": self.__rename,
             "rename_udf": self.__rename_udf,
-            "delete_history": self.__delete_history,
+            "delete_history": self.delete_history,
             "logging": self.__logging,
             "version": self.__version,
             "update_site": self.__update_site,
@@ -194,7 +193,7 @@ class WebAction:
             "delete_torrent_remove_task": self.__delete_torrent_remove_task,
             "get_remove_torrents": self.__get_remove_torrents,
             "auto_remove_torrents": self.__auto_remove_torrents,
-            "get_douban_history": self.get_douban_history,
+            "douban_sync": self.douban_sync,
             "delete_douban_history": self.__delete_douban_history,
             "list_brushtask_torrents": self.__list_brushtask_torrents,
             "set_system_config": self.__set_system_config,
@@ -224,6 +223,12 @@ class WebAction:
             "get_movie_rss_items": self.get_movie_rss_items,
             "get_tv_rss_items": self.get_tv_rss_items,
             "get_ical_events": self.get_ical_events,
+            "install_plugin": self.install_plugin,
+            "uninstall_plugin": self.uninstall_plugin,
+            "get_plugin_apps": self.get_plugin_apps,
+            "get_plugin_page": self.get_plugin_page,
+            "get_plugin_state": self.get_plugin_state,
+            "get_plugins_conf": self.get_plugins_conf
         }
 
     def action(self, cmd, data=None):
@@ -314,7 +319,7 @@ class WebAction:
             os.kill(os.getpid(), getattr(signal, "SIGKILL", signal.SIGTERM))
         elif SystemUtils.is_synology():
             os.system(
-                "sudo ps -ef | grep -v grep | grep 'python run.py'|awk '{print $2}'|xargs kill -9")
+                "ps -ef | grep -v grep | grep 'python run.py'|awk '{print $2}'|xargs kill -9")
         else:
             os.system("pm2 restart NAStool")
 
@@ -331,7 +336,7 @@ class WebAction:
             "/pts": {"func": SiteSignin().signin, "desp": "站点签到"},
             "/rst": {"func": Sync().transfer_all_sync, "desp": "目录同步"},
             "/rss": {"func": Rss().rssdownload, "desp": "RSS订阅"},
-            "/db": {"func": DoubanSync().sync, "desp": "豆瓣同步"},
+            "/db": {"func": WebAction().douban_sync, "desp": "豆瓣同步"},
             "/ssa": {"func": Subscribe().subscribe_search_all, "desp": "订阅搜索"},
             "/tbl": {"func": WebAction().truncate_blacklist, "desp": "清理转移缓存"},
             "/trh": {"func": WebAction().truncate_rsshistory, "desp": "清理RSS缓存"},
@@ -483,7 +488,7 @@ class WebAction:
             "ptsignin": SiteSignin().signin,
             "sync": Sync().transfer_all_sync,
             "rssdownload": Rss().rssdownload,
-            "douban": DoubanSync().sync,
+            "douban": WebAction().douban_sync,
             "subscribe_search_all": Subscribe().subscribe_search_all,
         }
         sch_item = data.get("item")
@@ -863,11 +868,11 @@ class WebAction:
                                                                udf_flag=True)
         return succ_flag, ret_msg
 
-    def __delete_history(self, data):
+    def delete_history(self, data):
         """
         删除识别记录及文件
         """
-        logids = data.get('logids')
+        logids = data.get('logids') or []
         flag = data.get('flag')
         for logid in logids:
             # 读取历史记录
@@ -895,9 +900,9 @@ class WebAction:
                     # 删除源文件
                     del_flag, del_msg = self.delete_media_file(source_path, source_filename)
                     if not del_flag:
-                        log.error(f"【Web】{del_msg}")
+                        log.error(del_msg)
                     else:
-                        log.info(f"【Web】{del_msg}")
+                        log.info(del_msg)
                         # 触发源文件删除事件
                         EventManager().send_event(EventType.SourceFileDeleted, {
                             "media_info": media_info,
@@ -909,9 +914,9 @@ class WebAction:
                     if dest_path and dest_filename:
                         del_flag, del_msg = self.delete_media_file(dest_path, dest_filename)
                         if not del_flag:
-                            log.error(f"【Web】{del_msg}")
+                            log.error(del_msg)
                         else:
-                            log.info(f"【Web】{del_msg}")
+                            log.info(del_msg)
                             # 触发媒体库文件删除事件
                             EventManager().send_event(EventType.LibraryFileDeleted, {
                                 "media_info": media_info,
@@ -1422,6 +1427,8 @@ class WebAction:
         filter_pix = data.get("filter_pix")
         filter_team = data.get("filter_team")
         filter_rule = data.get("filter_rule")
+        filter_include = data.get("filter_include")
+        filter_exclude = data.get("filter_exclude")
         save_path = data.get("save_path")
         download_setting = data.get("download_setting")
         total_ep = data.get("total_ep")
@@ -1451,6 +1458,8 @@ class WebAction:
                                                                      filter_pix=filter_pix,
                                                                      filter_team=filter_team,
                                                                      filter_rule=filter_rule,
+                                                                     filter_include=filter_include,
+                                                                     filter_exclude=filter_exclude,
                                                                      save_path=save_path,
                                                                      download_setting=download_setting,
                                                                      rssid=rssid)
@@ -1472,6 +1481,8 @@ class WebAction:
                                                                  filter_pix=filter_pix,
                                                                  filter_team=filter_team,
                                                                  filter_rule=filter_rule,
+                                                                 filter_include=filter_include,
+                                                                 filter_exclude=filter_exclude,
                                                                  save_path=save_path,
                                                                  download_setting=download_setting,
                                                                  total_ep=total_ep,
@@ -1742,27 +1753,18 @@ class WebAction:
         system_msg = self.get_system_message(lst_time=lst_time)
         messages = system_msg.get("message")
         lst_time = system_msg.get("lst_time")
-        message_html = []
+        ret_messages = []
         for message in list(reversed(messages)):
-            level = "bg-red" if message.get("level") == "ERROR" else ""
             content = re.sub(r"#+", "<br>",
                              re.sub(r"<[^>]+>", "",
                                     re.sub(r"<br/?>", "####", message.get("content"), flags=re.IGNORECASE)))
-            message_html.append(f"""
-            <div class="list-group-item">
-              <div class="row align-items-center">
-                <div class="col-auto">
-                  <span class="status-dot {level} d-block"></span>
-                </div>
-                <div class="col text-truncate">
-                  <span class="text-wrap">{message.get("title")}</span>
-                  <div class="d-block text-muted text-truncate mt-n1 text-wrap">{content}</div>
-                  <div class="d-block text-muted text-truncate mt-n1 text-wrap">{message.get("time")}</div>
-                </div>
-              </div>
-            </div>
-            """)
-        return {"code": 0, "message": message_html, "lst_time": lst_time}
+            ret_messages.append({
+                "level": "bg-red" if message.get("level") == "ERROR" else "",
+                "title": message.get("title"),
+                "content": content,
+                "time": message.get("time")
+            })
+        return {"code": 0, "message": ret_messages, "lst_time": lst_time}
 
     @staticmethod
     def __delete_tmdb_cache(data):
@@ -1814,8 +1816,8 @@ class WebAction:
                 return {"code": 1, "retmsg": "没有TMDBID信息"}
             if not tmdb_info:
                 return {"code": 1, "retmsg": "无法查询到TMDB信息"}
-            poster_path = TMDB_IMAGE_W500_URL % tmdb_info.get('poster_path') if tmdb_info.get(
-                'poster_path') else ""
+            poster_path = Config().get_tmdbimage_url(tmdb_info.get('poster_path')) \
+                if tmdb_info.get('poster_path') else ""
             title = tmdb_info.get('title')
             vote_average = tmdb_info.get("vote_average")
             release_date = tmdb_info.get('release_date')
@@ -1880,13 +1882,11 @@ class WebAction:
             if not tmdb_info.get("poster_path"):
                 tv_tmdb_info = Media().get_tmdb_info(mtype=MediaType.TV, tmdbid=tid)
                 if tv_tmdb_info:
-                    poster_path = TMDB_IMAGE_W500_URL % tv_tmdb_info.get(
-                        "poster_path")
+                    poster_path = Config().get_tmdbimage_url(tv_tmdb_info.get('poster_path'))
                 else:
                     poster_path = ""
             else:
-                poster_path = TMDB_IMAGE_W500_URL % tmdb_info.get(
-                    "poster_path")
+                poster_path = Config().get_tmdbimage_url(tmdb_info.get('poster_path'))
             year = air_date[0:4] if air_date else ""
             for episode in tmdb_info.get("episodes"):
                 episode_events.append({
@@ -2416,10 +2416,10 @@ class WebAction:
 
         # 补充存在与订阅状态
         for res in res_list:
-            fav, rssid = self.get_media_exists_flag(mtype=res.get("type"),
-                                                    title=res.get("title"),
-                                                    year=res.get("year"),
-                                                    mediaid=res.get("id"))
+            fav, rssid, item_url = self.get_media_exists_info(mtype=res.get("type"),
+                                                              title=res.get("title"),
+                                                              year=res.get("year"),
+                                                              mediaid=res.get("id"))
             res.update({
                 'fav': fav,
                 'rssid': rssid
@@ -3489,7 +3489,8 @@ class WebAction:
             SE_key = item.ES_STRING if item.ES_STRING and mtype != "MOV" else "MOV"
             media_type = {"MOV": "电影", "TV": "电视剧", "ANI": "动漫"}.get(mtype)
             # 只需要部分种子标签
-            labels = [label for label in str(item.NOTE).split("|") if label in ["官方", "中字", "国语", "特效字幕"]]
+            labels = [label for label in str(item.NOTE).split("|")
+                      if label in ["官方", "官组", "中字", "国语", "特效", "特效字幕"]]
             # 种子信息
             torrent_item = {
                 "id": item.ID,
@@ -3576,7 +3577,7 @@ class WebAction:
                 fav, rssid = 0, None
                 # 存在标志
                 if item.TMDBID:
-                    fav, rssid = self.get_media_exists_flag(
+                    fav, rssid, item_url = self.get_media_exists_info(
                         mtype=mtype,
                         title=item.TITLE,
                         year=item.YEAR,
@@ -4063,9 +4064,9 @@ class WebAction:
                 del_flag, del_msg = self.delete_media_file(filedir=os.path.dirname(file),
                                                            filename=os.path.basename(file))
                 if not del_flag:
-                    log.error(f"【Web】{del_msg}")
+                    log.error(del_msg)
                 else:
-                    log.info(f"【Web】{del_msg}")
+                    log.info(del_msg)
         return {"code": 0}
 
     @staticmethod
@@ -4097,7 +4098,8 @@ class WebAction:
         """
         # 触发字幕下载事件
         EventManager().send_event(EventType.MediaScrapStart, {
-            "path": data.get("path")
+            "path": data.get("path"),
+            "force": True
         })
         return {"code": 0, "msg": "刮削任务已提交，正在后台运行。"}
 
@@ -4376,13 +4378,6 @@ class WebAction:
         sitename = data.get("name")
         return {"code": 0, "icon": Sites().get_site_favicon(site_name=sitename)}
 
-    def get_douban_history(self, data=None):
-        """
-        查询豆瓣同步历史
-        """
-        results = self.dbhelper.get_douban_history()
-        return {"code": 0, "result": [item.as_dict() for item in results]}
-
     def __delete_douban_history(self, data):
         """
         删除豆瓣同步历史
@@ -4521,10 +4516,10 @@ class WebAction:
                 "msg": "无法查询到TMDB信息"
             }
         # 查询存在及订阅状态
-        fav, rssid = self.get_media_exists_flag(mtype=mtype,
-                                                title=media_info.title,
-                                                year=media_info.year,
-                                                mediaid=media_info.tmdb_id)
+        fav, rssid, item_url = self.get_media_exists_info(mtype=mtype,
+                                                          title=media_info.title,
+                                                          year=media_info.year,
+                                                          mediaid=media_info.tmdb_id)
         MediaHandler = Media()
         MediaServerHandler = MediaServer()
         # 查询季
@@ -4533,12 +4528,12 @@ class WebAction:
         if seasons:
             for season in seasons:
                 season.update({
-                    "state": MediaServerHandler.check_item_exists(
+                    "state": True if MediaServerHandler.check_item_exists(
                         mtype=mtype,
                         title=media_info.title,
                         year=media_info.year,
                         tmdbid=media_info.tmdb_id,
-                        season=season.get("season_number"))
+                        season=season.get("season_number")) else False
                 })
         return {
             "code": 0,
@@ -4559,6 +4554,7 @@ class WebAction:
                 "link": media_info.get_detail_url(),
                 "douban_link": media_info.get_douban_detail_url(),
                 "fav": fav,
+                "item_url": item_url,
                 "rssid": rssid,
                 "seasons": seasons
             }
@@ -4666,14 +4662,14 @@ class WebAction:
         PluginManager().reload_plugin(plugin_id)
         return {"code": 0, "msg": "保存成功"}
 
-    def get_media_exists_flag(self, mtype, title, year, mediaid):
+    def get_media_exists_info(self, mtype, title, year, mediaid):
         """
         获取媒体存在标记：是否存在、是否订阅
         :param: mtype 媒体类型
         :param: title 媒体标题
         :param: year 媒体年份
         :param: mediaid TMDBID/DB:豆瓣ID/BG:Bangumi的ID
-        :return: 1-已订阅/2-已下载/0-不存在未订阅, RSSID
+        :return: 1-已订阅/2-已下载/0-不存在未订阅, RSSID, 如果已下载,还会有对应的媒体库的播放地址链接
         """
         if str(mediaid).isdigit():
             tmdbid = mediaid
@@ -4691,16 +4687,21 @@ class WebAction:
             else:
                 season = None
             rssid = self.dbhelper.get_rss_tv_id(title=title, year=year, season=season, tmdbid=tmdbid)
+        item_url = None
         if rssid:
             # 已订阅
             fav = "1"
-        elif MediaServer().check_item_exists(mtype=mtype, title=title, year=year, tmdbid=tmdbid):
-            # 已下载
-            fav = "2"
         else:
-            # 未订阅、未下载
-            fav = "0"
-        return fav, rssid
+            # 检查媒体服务器是否存在
+            item_id = MediaServer().check_item_exists(mtype=mtype, title=title, year=year, tmdbid=tmdbid)
+            if item_id:
+                # 已下载
+                fav = "2"
+                item_url = MediaServer().get_play_url(item_id=item_id)
+            else:
+                # 未订阅、未下载
+                fav = "0"
+        return fav, rssid, item_url
 
     @staticmethod
     def __get_season_episodes(data=None):
@@ -4718,13 +4719,13 @@ class WebAction:
         MediaServerHandler = MediaServer()
         for episode in episodes:
             episode.update({
-                "state": MediaServerHandler.check_item_exists(
+                "state": True if MediaServerHandler.check_item_exists(
                     mtype=MediaType.TV,
                     title=title,
                     year=year,
                     tmdbid=tmdbid,
                     season=season,
-                    episode=episode.get("episode_number"))
+                    episode=episode.get("episode_number")) else False
             })
         return {
             "code": 0,
@@ -4952,7 +4953,6 @@ class WebAction:
         获取ical日历事件
         """
         Events = []
-        MediaHandler = Media()
         # 电影订阅
         RssMovieItems = self.get_movie_rss_items().get("result")
         for movie in RssMovieItems:
@@ -4970,3 +4970,81 @@ class WebAction:
                         Events.append(info)
 
         return {"code": 0, "result": Events}
+
+    @staticmethod
+    def install_plugin(data):
+        """
+        安装插件
+        """
+        module_id = data.get("id")
+        if not module_id:
+            return {"code": -1, "msg": "参数错误"}
+        # 用户已安装插件列表
+        user_plugins = SystemConfig().get_system_config(SystemConfigKey.UserInstalledPlugins) or []
+        if module_id not in user_plugins:
+            user_plugins.append(module_id)
+        # 保存配置
+        SystemConfig().set_system_config(SystemConfigKey.UserInstalledPlugins, user_plugins)
+        # 重新加载插件
+        PluginManager().init_config()
+        return {"code": 0, "msg": "插件安装成功"}
+
+    @staticmethod
+    def uninstall_plugin(data):
+        """
+        卸载插件
+        """
+        module_id = data.get("id")
+        if not module_id:
+            return {"code": -1, "msg": "参数错误"}
+        # 用户已安装插件列表
+        user_plugins = SystemConfig().get_system_config(SystemConfigKey.UserInstalledPlugins) or []
+        if module_id in user_plugins:
+            user_plugins.remove(module_id)
+        # 保存配置
+        SystemConfig().set_system_config(SystemConfigKey.UserInstalledPlugins, user_plugins)
+        # 重新加载插件
+        PluginManager().init_config()
+        return {"code": 0, "msg": "插件卸载功"}
+
+    @staticmethod
+    def get_plugin_apps(data=None):
+        """
+        获取插件列表
+        """
+        return {"code": 0, "result": PluginManager().get_plugin_apps(current_user.level)}
+
+    @staticmethod
+    def get_plugin_page(data):
+        """
+        查询插件的额外数据
+        """
+        plugin_id = data.get("id")
+        if not plugin_id:
+            return {"code": 1, "msg": "参数错误"}
+        title, content = PluginManager().get_plugin_page(pid=plugin_id)
+        return {"code": 0, "title": title, "content": content}
+
+    @staticmethod
+    def get_plugin_state(data):
+        """
+        获取插件状态
+        """
+        plugin_id = data.get("id")
+        if not plugin_id:
+            return {"code": 1, "msg": "参数错误"}
+        state = PluginManager().get_plugin_state(plugin_id)
+        return {"code": 0, "state": state}
+
+    @staticmethod
+    def get_plugins_conf(data=None):
+        Plugins = PluginManager().get_plugins_conf(current_user.level)
+        return {"code": 0, "result": Plugins}
+
+    @staticmethod
+    def douban_sync(data=None):
+        """
+        启动豆瓣同步
+        """
+        # 触发事件
+        EventManager().send_event(EventType.DoubanSync, {})

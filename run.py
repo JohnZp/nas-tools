@@ -10,7 +10,7 @@ is_windows_exe = getattr(sys, 'frozen', False) and (os.name == "nt")
 if is_windows_exe:
     # 托盘相关库
     import threading
-    from windows.trayicon import TrayIcon, NullWriter
+    from package.trayicon import TrayIcon, NullWriter
 
     # 初始化环境变量
     os.environ["NASTOOL_CONFIG"] = os.path.join(os.path.dirname(sys.executable),
@@ -33,7 +33,7 @@ from web.action import WebAction
 from web.main import App
 from app.db import init_db, update_db, init_data
 from app.helper import init_chrome
-from check_config import update_config, check_config,  start_config_monitor, stop_config_monitor
+from initializer import update_config, check_config,  start_config_monitor, stop_config_monitor
 from version import APP_VERSION
 
 
