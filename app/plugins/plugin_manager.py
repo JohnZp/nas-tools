@@ -108,6 +108,7 @@ class PluginManager:
             if module_id not in user_plugins:
                 continue
             self._running_plugins[module_id] = plugin()
+            # 初始化配置
             self.reload_plugin(module_id)
             log.info(f"加载插件：{plugin}")
 
@@ -128,11 +129,14 @@ class PluginManager:
         """
         生效插件配置
         """
+        if not pid:
+            return
         if not self._running_plugins.get(pid):
             return
         if hasattr(self._running_plugins[pid], "init_config"):
             try:
                 self._running_plugins[pid].init_config(self.get_plugin_config(pid))
+                log.debug(f"生效插件配置：{pid}")
             except Exception as err:
                 print(str(err))
 
@@ -154,7 +158,7 @@ class PluginManager:
 
     def get_plugin_page(self, pid):
         """
-        获取插件数据
+        获取插件额外页面数据
         """
         if not self._running_plugins.get(pid):
             return None
@@ -162,6 +166,16 @@ class PluginManager:
             return None
         title, html = self._running_plugins[pid].get_page()
         return title, html
+
+    def get_plugin_script(self, pid):
+        """
+        获取插件额外脚本
+        """
+        if not self._running_plugins.get(pid):
+            return None
+        if not hasattr(self._running_plugins[pid], "get_script"):
+            return None
+        return self._running_plugins[pid].get_script()
 
     def get_plugin_state(self, pid):
         """
@@ -205,9 +219,13 @@ class PluginManager:
                 conf.update({"color": plugin.module_color})
             if hasattr(plugin, "module_config_prefix"):
                 conf.update({"prefix": plugin.module_config_prefix})
+            # 插件额外的页面
             if hasattr(plugin, "get_page"):
                 title, _ = plugin.get_page()
                 conf.update({"page": title})
+            # 插件额外的脚本
+            if hasattr(plugin, "get_script"):
+                conf.update({"script": plugin.get_script()})
             # 配置项
             conf.update({"fields": plugin.get_fields() or {}})
             # 配置值
