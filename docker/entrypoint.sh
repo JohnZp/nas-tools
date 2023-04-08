@@ -14,7 +14,6 @@ if [ "${NASTOOL_AUTO_UPDATE}" = "true" ]; then
         sha256sum package_list.txt > /tmp/package_list.txt.sha256sum
     fi
     echo "更新主程序..."
-    git checkout .
     git remote set-url origin "${REPO_URL}" &> /dev/null
     echo "windows/" > .gitignore
     # 更新分支
@@ -26,6 +25,7 @@ if [ "${NASTOOL_AUTO_UPDATE}" = "true" ]; then
 
     git clean -dffx
     git fetch --depth 1 origin ${branch}
+    git checkout .
     git reset --hard origin/${branch}
 
     if [ $? -eq 0 ]; then
