@@ -57,10 +57,10 @@ if [ "${NASTOOL_AUTO_UPDATE}" = "true" ]; then
             echo "检测到requirements.txt有变化，重新安装依赖..."
             if [ "${NASTOOL_CN_UPDATE}" = "true" ]; then
                 pip install --upgrade pip setuptools wheel -i "${PYPI_MIRROR}"
-                pip --default-timeout=300 install --ignore-installed -r requirements.txt -i "${PYPI_MIRROR}"
+                pip --default-timeout=300 install -r requirements.txt -i "${PYPI_MIRROR}"
             else
                 pip install --upgrade pip setuptools wheel
-                pip --default-timeout=300 install --ignore-installed -r requirements.txt
+                pip --default-timeout=300 install -r requirements.txt
             fi
             if [ $? -ne 0 ]; then
                 echo "无法安装依赖，请更新镜像！"
@@ -82,6 +82,24 @@ if [ "${NASTOOL_AUTO_UPDATE}" = "true" ]; then
             else
                 echo "第三方组件安装成功"
                 sha256sum third_party.txt > /tmp/third_party.txt.sha256sum
+            fi
+        fi
+        # 系统软件包更新
+        hash_old=$(cat /tmp/package_list.txt.sha256sum)
+        hash_new=$(sha256sum package_list.txt)
+        if [ "${hash_old}" != "${hash_new}" ]; then
+            echo "检测到package_list.txt有变化，更新软件包..."
+            if [ "${NASTOOL_CN_UPDATE}" = "true" ]; then
+                sed -i "s/dl-cdn.alpinelinux.org/${ALPINE_MIRROR}/g" /etc/apk/repositories
+                apk update -f
+            fi
+            apk add --no-cache libffi-dev
+            apk add --no-cache $(echo $(cat package_list.txt))
+            if [ $? -ne 0 ]; then
+                echo "无法更新软件包，请更新镜像..."
+            else
+                echo "软件包安装成功..."
+                sha256sum package_list.txt > /tmp/package_list.txt.sha256sum
             fi
         fi
     else
