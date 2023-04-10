@@ -6,11 +6,13 @@ from threading import Event
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from bencode import bdecode, bencode
 
 from app.downloader import Downloader
 from app.media.meta import MetaInfo
 from app.message import Message
 from app.plugins.modules._base import _IPluginModule
+from app.utils import Torrent
 from app.utils.types import DownloaderType
 from config import Config
 
@@ -35,7 +37,7 @@ class TorrentTransfer(_IPluginModule):
     # 加载顺序
     module_order = 20
     # 可使用的用户级别
-    user_level = 1
+    user_level = 2
 
     # 私有属性
     _scheduler = None
@@ -133,19 +135,19 @@ class TorrentTransfer(_IPluginModule):
                             'content': [
                                 {
                                     'id': 'fromtorrentpath',
-                                    'placeholder': 'BT_backup|torrents',
+                                    'placeholder': 'xxx/BT_backup、xxx/torrents',
                                 }
                             ]
                         },
                         {
                             'title': '数据文件根路径',
                             'required': "required",
-                            'tooltip': '源下载器中的种子数据文件保存根目录路径，必须是下载器能访问的路径，用于转移时替换种子数据文件路径使用',
+                            'tooltip': '源下载器中的种子数据文件保存根目录路径，必须是下载器能访问的路径，用于转移时转换种子数据文件路径使用；留空不进行路径转换，使用种子的数据文件保存目录',
                             'type': 'text',
                             'content': [
                                 {
                                     'id': 'frompath',
-                                    'placeholder': '根路径',
+                                    'placeholder': '根路径，留空不进行路径转换',
                                 }
                             ]
                         }
@@ -170,12 +172,12 @@ class TorrentTransfer(_IPluginModule):
                         {
                             'title': '数据文件根路径',
                             'required': "required",
-                            'tooltip': '目的下载器的种子数据文件保存目录根路径，必须是下载器能访问的路径，将会使用该路径替换源下载器中种子数据文件保存路径中的源目录根路径，替换后的新路径做为目的下载器种子数据文件的保存路径，需要准确填写，否则可能导致移转做种后找不到数据文件，从而触发重新下载',
+                            'tooltip': '目的下载器的种子数据文件保存目录根路径，必须是下载器能访问的路径，将会使用该路径替换源下载器中种子数据文件保存路径中的源目录根路径，替换后的新路径做为目的下载器种子数据文件的保存路径，需要准确填写，否则可能导致移转做种后找不到数据文件无法做种；留空不进行路径转换，使用种子的数据文件保存路径',
                             'type': 'text',
                             'content': [
                                 {
                                     'id': 'topath',
-                                    'placeholder': '根路径',
+                                    'placeholder': '根路径，留空不进行路径转换',
                                 }
                             ]
                         }
@@ -247,6 +249,7 @@ class TorrentTransfer(_IPluginModule):
             self._todownloader = config.get("todownloader")
             self._deletesource = config.get("deletesource")
             self._fromtorrentpath = config.get("fromtorrentpath")
+            self._nopaths = config.get("nopaths")
 
         # 停止现有任务
         self.stop_service()
@@ -286,6 +289,7 @@ class TorrentTransfer(_IPluginModule):
                     "todownloader": self._todownloader,
                     "deletesource": self._deletesource,
                     "fromtorrentpath": self._fromtorrentpath,
+                    "nopaths": self._nopaths
                 })
             if self._scheduler.get_jobs():
                 # 追加种子校验服务
@@ -299,8 +303,6 @@ class TorrentTransfer(_IPluginModule):
                        and self._cron \
                        and self._fromdownloader \
                        and self._todownloader \
-                       and self._frompath \
-                       and self._topath \
                        and self._fromtorrentpath else False
 
     def transfer(self):
@@ -310,18 +312,18 @@ class TorrentTransfer(_IPluginModule):
         if not self._enable \
                 or not self._fromdownloader \
                 or not self._todownloader \
-                or not self._frompath \
-                or not self._topath \
                 or not self._fromtorrentpath:
             self.warn("移转做种服务未启用或未配置")
             return
         self.info("开始移转做种任务 ...")
         # 源下载器
         downloader = self._fromdownloader[0]
+        # 源下载器类型
+        downloader_type = self.downloader.get_downloader_type(downloader_id=downloader)
         # 目的下载器
         todownloader = self._todownloader[0]
-        # 下载器类型
-        downloader_type = self.downloader.get_downloader_type(downloader_id=downloader)
+        # 目的下载器类型
+        to_downloader_type = self.downloader.get_downloader_type(downloader_id=todownloader)
         # 获取下载器中已完成的种子
         torrents = self.downloader.get_completed_torrents(downloader_id=downloader)
         if torrents:
@@ -351,11 +353,15 @@ class TorrentTransfer(_IPluginModule):
                     continue
             # 获取种子标签
             torrent_labels = self.__get_label(torrent, downloader_type)
-            if self._nolabels \
-                    and torrent_labels \
-                    and set(self._nolabels.split(',')).intersection(set(torrent_labels)):
-                self.info(f"种子 {hash_str} 含有不转移标签，跳过 ...")
-                continue
+            if torrent_labels and self._nolabels:
+                is_skip = False
+                for label in self._nolabels.split(','):
+                    if label in torrent_labels:
+                        self.info(f"种子 {hash_str} 含有不转移标签 {label}，跳过 ...")
+                        is_skip = True
+                        break
+                if is_skip:
+                    continue
             hash_strs.append({
                 "hash": hash_str,
                 "save_path": save_path
@@ -369,7 +375,8 @@ class TorrentTransfer(_IPluginModule):
             fail = 0
             for hash_item in hash_strs:
                 # 检查种子文件是否存在
-                torrent_file = os.path.join(self._fromtorrentpath, f"{hash_item.get('hash')}.torrent")
+                torrent_file = os.path.join(self._fromtorrentpath,
+                                            f"{hash_item.get('hash')}.torrent")
                 if not os.path.exists(torrent_file):
                     self.error(f"种子文件不存在：{torrent_file}")
                     fail += 1
@@ -388,6 +395,57 @@ class TorrentTransfer(_IPluginModule):
                     self.error(f"转换保存路径失败：{hash_item.get('save_path')}")
                     fail += 1
                     continue
+
+                # 如果是QB检查是否有Tracker，没有的话补充解析
+                if downloader_type == DownloaderType.QB:
+                    # 读取种子内容、解析种子文件
+                    content, _, _, retmsg = Torrent().read_torrent_content(torrent_file)
+                    if not content:
+                        self.error(f"读取种子文件失败：{retmsg}")
+                        fail += 1
+                        continue
+                    # 读取trackers
+                    try:
+                        torrent_main = bdecode(content)
+                        main_announce = torrent_main.get('announce')
+                    except Exception as err:
+                        self.error(f"解析种子文件 {torrent_file} 失败：{err}")
+                        fail += 1
+                        continue
+
+                    if not main_announce:
+                        self.info(f"{hash_item.get('hash')} 未发现tracker信息，尝试补充tracker信息...")
+                        # 读取fastresume文件
+                        fastresume_file = os.path.join(self._fromtorrentpath,
+                                                       f"{hash_item.get('hash')}.fastresume")
+                        if not os.path.exists(fastresume_file):
+                            self.error(f"fastresume文件不存在：{fastresume_file}")
+                            fail += 1
+                            continue
+                        # 尝试补充trackers
+                        try:
+                            with open(fastresume_file, 'rb') as f:
+                                fastresume = f.read()
+                            # 解析fastresume文件
+                            torrent_fastresume = bdecode(fastresume)
+                            # 读取trackers
+                            fastresume_trackers = torrent_fastresume.get('trackers')
+                            if isinstance(fastresume_trackers, list) \
+                                    and len(fastresume_trackers) > 0 \
+                                    and fastresume_trackers[0]:
+                                # 重新赋值
+                                torrent_main['announce'] = fastresume_trackers[0][0]
+                                # 替换种子文件路径
+                                torrent_file = os.path.join(Config().get_temp_path(),
+                                                            f"{hash_item.get('hash')}.torrent")
+                                # 编码并保存到临时文件
+                                with open(torrent_file, 'wb') as f:
+                                    f.write(bencode(torrent_main))
+                        except Exception as err:
+                            self.error(f"解析fastresume文件 {fastresume_file} 失败：{err}")
+                            fail += 1
+                            continue
+
                 # 发送到另一个下载器中下载：默认暂停、传输下载路径、关闭自动管理模式
                 _, download_id, retmsg = self.downloader.download(
                     media_info=MetaInfo("自动转移做种"),
@@ -415,8 +473,7 @@ class TorrentTransfer(_IPluginModule):
                     # 下载成功
                     self.info(f"成功添加转移做种任务，种子文件：{torrent_file}")
                     # TR会自动校验
-                    downloader_type = self.downloader.get_downloader_type(downloader_id=todownloader)
-                    if downloader_type == DownloaderType.QB:
+                    if to_downloader_type == DownloaderType.QB:
                         # 开始校验种子
                         self.downloader.recheck_torrents(downloader_id=todownloader, ids=[download_id])
                     # 删除源种子，不能删除文件！
@@ -534,9 +591,9 @@ class TorrentTransfer(_IPluginModule):
             # 没有保存目录，以目的根目录为准
             if not save_path:
                 return to_root
-            # 没有设置根目录时返回None
+            # 没有设置根目录时返回save_path
             if not to_root or not from_root:
-                return None
+                return save_path
             # 统一目录格式
             save_path = os.path.normpath(save_path).replace("\\", "/")
             from_root = os.path.normpath(from_root).replace("\\", "/")

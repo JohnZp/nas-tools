@@ -59,6 +59,7 @@ class DoubanRank(_IPluginModule):
     _cron = ""
     _rss_addrs = []
     _ranks = []
+    _vote = 0
     _scheduler = None
 
     def init_config(self, config: dict = None):
@@ -69,6 +70,7 @@ class DoubanRank(_IPluginModule):
             self._enable = config.get("enable")
             self._onlyonce = config.get("onlyonce")
             self._cron = config.get("cron")
+            self._vote = float(config.get("vote")) if config.get("vote") else 0
             rss_addrs = config.get("rss_addrs")
             if rss_addrs:
                 if isinstance(rss_addrs, str):
@@ -100,6 +102,7 @@ class DoubanRank(_IPluginModule):
                     "enable": self._enable,
                     "cron": self._cron,
                     "ranks": self._ranks,
+                    "vote": self._vote,
                     "rss_addrs": "\n".join(self._rss_addrs)
                 })
             if self._scheduler.get_jobs():
@@ -146,6 +149,18 @@ class DoubanRank(_IPluginModule):
                                 {
                                     'id': 'cron',
                                     'placeholder': '0 0 0 ? *',
+                                }
+                            ]
+                        },
+                        {
+                            'title': '评分',
+                            'required': "",
+                            'tooltip': '大于该评分的才会被订阅（以TMDB评分为准），不填则不限制',
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'vote',
+                                    'placeholder': '0',
                                 }
                             ]
                         }
@@ -253,12 +268,25 @@ class DoubanRank(_IPluginModule):
                     if self._event.is_set():
                         self.info(f"订阅服务停止")
                         return
+
+                    title = rss_info.get('title')
+                    douban_id = rss_info.get('doubanid')
+                    mtype = rss_info.get('type')
+                    unique_flag = f"doubanrank: {title} (DB:{douban_id})"
+                    # 检查是否已处理过
+                    if self.dbhelper.is_userrss_finished(torrent_name=unique_flag, enclosure=None):
+                        self.info(f"已处理过：{title} （豆瓣id：{douban_id}）")
+                        continue
                     # 识别媒体信息
-                    media_info = WebUtils.get_mediainfo_from_id(mtype=rss_info.get("type"),
-                                                                mediaid=f"DB:{rss_info.get('doubanid')}",
+                    media_info = WebUtils.get_mediainfo_from_id(mtype=mtype,
+                                                                mediaid=f"DB:{douban_id}",
                                                                 wait=True)
                     if not media_info:
-                        self.warn(f"未查询到媒体信息：{rss_info.get('doubanid')} - {rss_info.get('title')}")
+                        self.warn(f"未查询到媒体信息：{title} （豆瓣id：{douban_id}）")
+                        continue
+                    if self._vote and media_info.vote_average \
+                            and media_info.vote_average < self._vote:
+                        self.info(f"{media_info.get_title_string()} 评分 {media_info.vote_average} 低于限制 {self._vote}，跳过 ．．．")
                         continue
                     # 检查媒体服务器是否存在
                     item_id = self.mediaserver.check_item_exists(mtype=media_info.type,
@@ -278,6 +306,8 @@ class DoubanRank(_IPluginModule):
                         self.info(
                             f"{media_info.get_title_string()}{media_info.get_season_string()} 已订阅过")
                         continue
+                    # 添加处理历史
+                    self.dbhelper.simple_insert_rss_torrents(title=unique_flag, enclosure=None)
                     # 添加订阅
                     code, msg, rss_media = self.subscribe.add_rss_subscribe(
                         mtype=media_info.type,
