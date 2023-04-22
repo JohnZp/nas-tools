@@ -6,12 +6,12 @@ from threading import Event
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from jinja2 import Template
 from lxml import etree
 
 from app.downloader import Downloader
 from app.helper import IyuuHelper
 from app.media.meta import MetaInfo
-from app.message import Message
 from app.plugins.modules._base import _IPluginModule
 from app.sites import Sites
 from app.utils import RequestUtils
@@ -46,7 +46,6 @@ class IYUUAutoSeed(_IPluginModule):
     downloader = None
     iyuuhelper = None
     sites = None
-    message = None
     # 限速开关
     _enable = False
     _cron = None
@@ -72,6 +71,8 @@ class IYUUAutoSeed(_IPluginModule):
     _is_recheck_running = False
     # 辅种缓存，出错的种子不再重复辅种，可清除
     _error_caches = []
+    # 辅种缓存，辅种成功的种子，可清除
+    _success_caches = []
     # 辅种缓存，出错的种子不再重复辅种，且无法清除。种子被删除404等情况
     _permanent_error_caches = []
     # 辅种计数
@@ -106,7 +107,7 @@ class IYUUAutoSeed(_IPluginModule):
                         {
                             'title': 'IYUU Token',
                             'required': "required",
-                            'tooltip': '登录IYUU使用的Token，用于调用IYUU官方Api',
+                            'tooltip': '登录IYUU使用的Token，用于调用IYUU官方Api；需要完成IYUU认证，填写token并保存后，可通过左下角按钮完成认证（已通过IYUU其它渠道认证过的无需再认证）',
                             'type': 'text',
                             'content': [
                                 {
@@ -182,7 +183,7 @@ class IYUUAutoSeed(_IPluginModule):
                         {
                             'title': '运行时通知',
                             'required': "",
-                            'tooltip': '运行辅助任务后会发送通知（需要打开自定义消息通知）',
+                            'tooltip': '运行辅助任务后会发送通知（需要打开插件消息通知）',
                             'type': 'switch',
                             'id': 'notify',
                         },
@@ -208,7 +209,6 @@ class IYUUAutoSeed(_IPluginModule):
     def init_config(self, config=None):
         self.downloader = Downloader()
         self.sites = Sites()
-        self.message = Message()
         # 读取配置
         if config:
             self._enable = config.get("enable")
@@ -222,6 +222,7 @@ class IYUUAutoSeed(_IPluginModule):
             self._clearcache = config.get("clearcache")
             self._permanent_error_caches = config.get("permanent_error_caches") or []
             self._error_caches = [] if self._clearcache else config.get("error_caches") or []
+            self._success_caches = [] if self._clearcache else config.get("success_caches") or []
         # 停止现有任务
         self.stop_service()
 
@@ -257,6 +258,89 @@ class IYUUAutoSeed(_IPluginModule):
     def get_state(self):
         return True if self._enable and self._cron and self._token and self._downloaders else False
 
+    def get_page(self):
+        """
+        IYUU认证页面
+        :return: 标题，页面内容，确定按钮响应函数
+        """
+        if not self._token:
+            return None, None, None
+        if not self.iyuuhelper:
+            self.iyuuhelper = IyuuHelper(token=self._token)
+        auth_sites = self.iyuuhelper.get_auth_sites()
+        template = """
+                  <div class="modal-body">
+                    <div class="row">
+                        <div class="col">
+                            <div class="mb-3">
+                                <label class="form-label required">IYUU合作站点</label>
+                                <select class="form-control" id="iyuuautoseed_site" onchange="">
+                                    {% for Site in AuthSites %}
+                                    <option value="{{ Site.site }}">{{ Site.site }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-lg">
+                            <div class="mb-3">
+                                <label class="form-label required">用户ID</label>
+                                <input class="form-control" autocomplete="off" type="text" id="iyuuautoseed_uid" placeholder="uid">
+                            </div>
+                        </div>
+                        <div class="col-lg">
+                            <div class="mb-3">
+                                <label class="form-label required">PassKey</label>
+                                <input class="form-control" autocomplete="off" type="text" id="iyuuautoseed_passkey" placeholder="passkey">
+                            </div>
+                        </div>
+                    </div>
+                  </div>
+                """
+        return "IYUU站点绑定",  Template(template).render(AuthSites=auth_sites,
+                                                      IyuuToken = self._token),  "IYUUAutoSeed_user_bind_site()"
+
+    @staticmethod
+    def get_script():
+        """
+        页面JS脚本
+        """
+        return """
+          // IYUU站点认证
+          function IYUUAutoSeed_user_bind_site(){
+            let site = $("#iyuuautoseed_site").val();
+            let uid = $("#iyuuautoseed_uid").val();
+            let passkey = $("#iyuuautoseed_passkey").val();
+            let token = '{{ IyuuToken }}';
+            if (!uid) {
+                $("#iyuuautoseed_uid").addClass("is-invalid");
+                return;
+            } else {
+                $("#iyuuautoseed_uid").removeClass("is-invalid");
+            }
+            if (!passkey) {
+                $("#iyuuautoseed_passkey").addClass("is-invalid");
+                return;
+            } else {
+                $("#iyuuautoseed_passkey").removeClass("is-invalid");
+            }
+            // 认证
+            ajax_post("iyuu_bind_site", {"token": token, "site": site, "uid": uid, "passkey": passkey}, function (ret) {
+                $("#modal-plugin-page").modal('hide');
+                if (ret.code === 0) {
+                    show_success_modal("IYUU用户认证成功！", function () {
+                        $("#modal-plugin-IYUUAutoSeed").modal('show');
+                    });
+                } else {
+                    show_fail_modal(ret.msg, function(){
+                        $("#modal-plugin-page").modal('show');
+                    });
+                }
+            });
+          }
+        """
+
     def __update_config(self):
         self.update_config({
             "enable": self._enable,
@@ -268,6 +352,7 @@ class IYUUAutoSeed(_IPluginModule):
             "sites": self._sites,
             "notify": self._notify,
             "nolabels": self._nolabels,
+            "success_caches": self._success_caches,
             "error_caches": self._error_caches,
             "permanent_error_caches": self._permanent_error_caches
         })
@@ -282,6 +367,13 @@ class IYUUAutoSeed(_IPluginModule):
         if not self.iyuuhelper:
             return
         self.info("开始辅种任务 ...")
+        # 计数器初始化
+        self.total = 0
+        self.realtotal = 0
+        self.success = 0
+        self.exist = 0
+        self.fail = 0
+        self.cached = 0
         # 扫描下载器辅种
         for downloader in self._downloaders:
             self.info(f"开始扫描下载器 {downloader} ...")
@@ -338,7 +430,7 @@ class IYUUAutoSeed(_IPluginModule):
         self.__update_config()
         # 发送消息
         if self._notify:
-            self.message.send_custom_message(
+            self.send_message(
                 title="【IYUU自动辅种任务完成】",
                 text=f"服务器返回可辅种总数：{self.total}\n"
                      f"实际可辅种数：{self.realtotal}\n"
@@ -417,6 +509,10 @@ class IYUUAutoSeed(_IPluginModule):
             seed_torrents = seed_info.get("torrent")
             if not isinstance(seed_torrents, list):
                 seed_torrents = [seed_torrents]
+
+            # 本次辅种成功的种子
+            success_torrents = []
+
             for seed in seed_torrents:
                 if not seed:
                     continue
@@ -427,14 +523,78 @@ class IYUUAutoSeed(_IPluginModule):
                 if seed.get("info_hash") in hashs:
                     self.info(f"{seed.get('info_hash')} 已在下载器中，跳过 ...")
                     continue
+                if seed.get("info_hash") in self._success_caches:
+                    self.info(f"{seed.get('info_hash')} 已处理过辅种，跳过 ...")
+                    continue
                 if seed.get("info_hash") in self._error_caches or seed.get("info_hash") in self._permanent_error_caches:
                     self.info(f"种子 {seed.get('info_hash')} 辅种失败且已缓存，跳过 ...")
                     continue
                 # 添加任务
-                self.__download_torrent(seed=seed,
-                                        downloader=downloader,
-                                        save_path=save_paths.get(current_hash))
+                success = self.__download_torrent(seed=seed,
+                                                  downloader=downloader,
+                                                  save_path=save_paths.get(current_hash))
+                if success:
+                    success_torrents.append(seed.get("info_hash"))
+
+            # 辅种成功的去重放入历史
+            if len(success_torrents) > 0:
+                self.__save_history(current_hash=current_hash,
+                                    downloader=downloader,
+                                    success_torrents=success_torrents)
+
         self.info(f"下载器 {downloader} 辅种完成")
+
+    def __save_history(self, current_hash, downloader, success_torrents):
+        """
+        [
+            {
+                "downloader":"2",
+                "torrents":[
+                    "248103a801762a66c201f39df7ea325f8eda521b",
+                    "bd13835c16a5865b01490962a90b3ec48889c1f0"
+                ]
+            },
+            {
+                "downloader":"3",
+                "torrents":[
+                    "248103a801762a66c201f39df7ea325f8eda521b",
+                    "bd13835c16a5865b01490962a90b3ec48889c1f0"
+                ]
+            }
+        ]
+        """
+        try:
+            # 查询当前Hash的辅种历史
+            seed_history = self.get_history(key=current_hash) or []
+
+            new_history = True
+            if len(seed_history) > 0:
+                for history in seed_history:
+                    if not history:
+                        continue
+                    if not isinstance(history, dict):
+                        continue
+                    if not history.get("downloader"):
+                        continue
+                    # 如果本次辅种下载器之前有过记录则继续添加
+                    if int(history.get("downloader")) == downloader:
+                        history_torrents = history.get("torrents") or []
+                        history["torrents"] = list(set(history_torrents + success_torrents))
+                        new_history = False
+                        break
+
+            # 本次辅种下载器之前没有成功记录则新增
+            if new_history:
+                seed_history.append({
+                    "downloader": downloader,
+                    "torrents": list(set(success_torrents))
+                })
+
+            # 保存历史
+            self.history(key=current_hash,
+                         value=seed_history)
+        except Exception as e:
+            print(str(e))
 
     def __download_torrent(self, seed, downloader, save_path):
         """
@@ -453,15 +613,15 @@ class IYUUAutoSeed(_IPluginModule):
             self._error_caches.append(seed.get("info_hash"))
             self.fail += 1
             self.cached += 1
-            return
+            return False
         # 查询站点
         site_info = self.sites.get_sites(siteurl=site_url)
         if not site_info:
             self.debug(f"没有维护种子对应的站点：{site_url}")
-            return
+            return False
         if self._sites and str(site_info.get("id")) not in self._sites:
             self.info("当前站点不在选择的辅助站点范围，跳过 ...")
-            return
+            return False
         self.realtotal += 1
         # 查询hash值是否已经在下载器中
         torrent_info = self.downloader.get_torrents(downloader_id=downloader,
@@ -469,11 +629,11 @@ class IYUUAutoSeed(_IPluginModule):
         if torrent_info:
             self.debug(f"{seed.get('info_hash')} 已在下载器中，跳过 ...")
             self.exist += 1
-            return
+            return False
         # 站点流控
         if self.sites.check_ratelimit(site_info.get("id")):
             self.fail += 1
-            return
+            return False
         # 下载种子
         torrent_url = self.__get_download_url(seed=seed,
                                               site=site_info,
@@ -483,11 +643,11 @@ class IYUUAutoSeed(_IPluginModule):
             self._error_caches.append(seed.get("info_hash"))
             self.fail += 1
             self.cached += 1
-            return
+            return False
         meta_info = MetaInfo(title="IYUU自动辅种")
         meta_info.set_torrent_info(site=site_info.get("name"),
                                    enclosure=torrent_url)
-        # 辅种任务默认暂停，关闭自动管理模式
+        # 辅种任务默认暂停
         _, download_id, retmsg = self.downloader.download(
             media_info=meta_info,
             is_paused=True,
@@ -495,7 +655,6 @@ class IYUUAutoSeed(_IPluginModule):
             downloader_id=downloader,
             download_dir=save_path,
             download_setting="-2",
-            is_auto=False
         )
         if not download_id:
             # 下载失败
@@ -509,7 +668,7 @@ class IYUUAutoSeed(_IPluginModule):
             else:
                 # 种子不存在的情况
                 self._permanent_error_caches.append(seed.get("info_hash"))
-            return
+            return False
         else:
             self.success += 1
             # 追加校验任务
@@ -524,6 +683,10 @@ class IYUUAutoSeed(_IPluginModule):
             if downloader_type == DownloaderType.QB:
                 # 开始校验种子
                 self.downloader.recheck_torrents(downloader_id=downloader, ids=[download_id])
+
+            # 成功也加入缓存，有一些改了路径校验不通过的，手动删除后，下一次又会辅上
+            self._success_caches.append(seed.get("info_hash"))
+            return True
 
     @staticmethod
     def __get_hash(torrent, dl_type):
@@ -600,11 +763,14 @@ class IYUUAutoSeed(_IPluginModule):
                 ).replace(
                     "/{}",
                     "/{id}"
+                ).replace(
+                    "/{torrent_key}",
+                    ""
                 ).format(
                     **{
                         "id": seed.get("torrent_id"),
                         "passkey": site.get("passkey") or '',
-                        "uid": site.get("uid") or ''
+                        "uid": site.get("uid") or '',
                     }
                 )
                 if download_url.count("{"):
@@ -617,8 +783,8 @@ class IYUUAutoSeed(_IPluginModule):
                                       flags=re.IGNORECASE)
                 return f"{site.get('strict_url')}/{download_url}"
         except Exception as e:
-            self.warn(f"当前不支持该站点的辅助任务，Url转换失败：{str(e)}")
-            return None
+            self.warn(f"站点 {site.get('name')} Url转换失败：{str(e)}，尝试通过详情页面获取种子下载链接 ...")
+            return self.__get_torrent_url_from_page(seed=seed, site=site)
 
     def __get_torrent_url_from_page(self, seed, site):
         """
@@ -656,6 +822,7 @@ class IYUUAutoSeed(_IPluginModule):
                 self.warn(f"获取种子下载链接失败，未找到下载链接：{page_url}")
                 return None
             else:
+                self.error(f"获取种子下载链接失败，请求失败：{page_url}，{res.status_code if res else ''}")
                 return None
         except Exception as e:
             self.warn(f"获取种子下载链接失败：{str(e)}")

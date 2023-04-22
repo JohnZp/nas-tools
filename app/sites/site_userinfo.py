@@ -140,7 +140,7 @@ class SiteUserInfo(object):
         if not site_schema:
             log.error("【Sites】站点 %s 无法识别站点类型" % site_name)
             return None
-        return site_schema(site_name, url, site_cookie, html_text, session=session, ua=ua)
+        return site_schema(site_name, url, site_cookie, html_text, session=session, ua=ua, emulate=emulate, proxy=proxy)
 
     def __refresh_site_data(self, site_info):
         """
@@ -236,7 +236,14 @@ class SiteUserInfo(object):
         incDownloads = 0
         _, _, site, upload, download = SiteUserInfo().get_pt_site_statistics_history(2)
 
-        for site, upload, download in zip(site, upload, download):
+        # 按照上传降序排序
+        data_list = list(zip(site, upload, download))
+        data_list = sorted(data_list, key=lambda x: x[1], reverse=True)
+
+        for data in data_list:
+            site = data[0]
+            upload = int(data[1])
+            download = int(data[2])
             if upload > 0 or download > 0:
                 incUploads += int(upload)
                 incDownloads += int(download)
@@ -245,7 +252,7 @@ class SiteUserInfo(object):
                                    f"下载量：{StringUtils.str_filesize(download)}\n"
                                    f"\n————————————")
 
-        if incDownloads and incUploads:
+        if incDownloads or incUploads:
             string_list.insert(0, f"【今日汇总】\n"
                                   f"总上传：{StringUtils.str_filesize(incUploads)}\n"
                                   f"总下载：{StringUtils.str_filesize(incDownloads)}\n"
@@ -373,6 +380,21 @@ class SiteUserInfo(object):
 
         site_seeding_info["seeding_info"] = json.loads(seeding_info[0])
         return site_seeding_info
+
+    def get_pt_site_min_join_date(self, sites=None):
+        """
+        查询站点加入时间
+        """
+        statistics = self.get_site_user_statistics(sites=sites, encoding="DICT")
+        if not statistics:
+            return ""
+        try:
+            max_date = min([datetime.strptime(d.get("join_at"), '%Y-%m-%d %H:%M:%S')
+                            for d in statistics if d.get("join_at") and d.get("join_at") != 'None'])
+            return max_date.strftime("%Y-%m-%d")
+        except Exception as err:
+            print(str(err))
+            return ""
 
     @staticmethod
     def __todict(raw_statistics):

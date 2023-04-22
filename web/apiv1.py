@@ -605,8 +605,6 @@ class DownloadConfigUpdate(ClientResource):
     parser.add_argument('name', type=str, help='名称', location='form', required=True)
     parser.add_argument('category', type=str, help='分类', location='form')
     parser.add_argument('tags', type=str, help='标签', location='form')
-    parser.add_argument('content_layout', type=int, help='布局（0-全局/1-原始/2-创建子文件夹/3-不建子文件夹）',
-                        location='form')
     parser.add_argument('is_paused', type=int, help='动作（0-添加后开始/1-添加后暂停）', location='form')
     parser.add_argument('upload_limit', type=int, help='上传速度限制', location='form')
     parser.add_argument('download_limit', type=int, help='下载速度限制', location='form')
@@ -2041,6 +2039,7 @@ class SyncDirectoryUpdate(ClientResource):
     parser.add_argument('to', type=str, help='目的目录', location='form')
     parser.add_argument('unknown', type=str, help='未知目录', location='form')
     parser.add_argument('syncmod', type=str, help='同步模式', location='form')
+    parser.add_argument('compatibility', type=str, help='兼容模式', location='form')
     parser.add_argument('rename', type=str, help='重命名', location='form')
     parser.add_argument('enabled', type=str, help='开启', location='form')
 
@@ -2100,7 +2099,7 @@ class SyncDirectoryList(ClientResource):
         """
         查询所有同步目录
         """
-        return WebAction().api_action(cmd='get_directorysync')
+        return WebAction().api_action(cmd='get_sync_path')
 
 
 @sync.route('/directory/run')

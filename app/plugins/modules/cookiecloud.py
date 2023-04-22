@@ -1,15 +1,12 @@
+from collections import defaultdict
 from datetime import datetime
 from threading import Event
-from collections import defaultdict
 
+import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-import pytz
-
-import log
 from app.helper import DbHelper, IndexerHelper
-from app.message import Message
 from app.plugins.modules._base import _IPluginModule
 from app.sites import Sites
 from app.utils import RequestUtils
@@ -42,7 +39,6 @@ class CookieCloud(_IPluginModule):
     _scheduler = None
     _site = None
     _dbhelper = None
-    _message = None
     _index_helper = None
     # 设置开关
     _req = None
@@ -57,6 +53,8 @@ class CookieCloud(_IPluginModule):
     _notify = False
     # 退出事件
     _event = Event()
+    # 需要忽略的Cookie
+    _ignore_cookies = ['CookieAutoDeleteBrowsingDataCleanup']
 
     @staticmethod
     def get_fields():
@@ -135,7 +133,7 @@ class CookieCloud(_IPluginModule):
                         {
                             'title': '运行时通知',
                             'required': "",
-                            'tooltip': '运行任务后会发送通知（需要打开自定义消息通知）',
+                            'tooltip': '运行任务后会发送通知（需要打开插件消息通知）',
                             'type': 'switch',
                             'id': 'notify',
                         },
@@ -154,7 +152,6 @@ class CookieCloud(_IPluginModule):
     def init_config(self, config=None):
         self._dbhelper = DbHelper()
         self._site = Sites()
-        self._message = Message()
         self._index_helper = IndexerHelper()
 
         # 读取配置
@@ -243,9 +240,13 @@ class CookieCloud(_IPluginModule):
         """
         # 同步数据
         self.info(f"同步服务开始 ...")
-        contents, msg, _ = self.__download_data()
+        contents, msg, flag = self.__download_data()
+        if not flag:
+            self.error(msg)
+            self.__send_message(msg)
+            return
         if not contents:
-            log.error(msg)
+            self.info(f"未从CookieCloud获取到数据")
             self.__send_message(msg)
             return
         # 整理数据,使用domain域名的最后两级作为分组依据
@@ -277,7 +278,9 @@ class CookieCloud(_IPluginModule):
                 continue
             # Cookie
             cookie_str = ";".join(
-                [f"{content['name']}={content['value']}" for content in content_list]
+                [f"{content.get('name')}={content.get('value')}"
+                 for content in content_list
+                 if content.get("name") and content.get("name") not in self._ignore_cookies]
             )
             # 查询站点
             site_info = self._site.get_sites_by_suffix(domain_url)
@@ -315,7 +318,7 @@ class CookieCloud(_IPluginModule):
         """
         发送通知
         """
-        self._message.send_custom_message(
+        self.send_message(
             title="【CookieCloud同步任务执行完成】",
             text=f"{msg}"
         )

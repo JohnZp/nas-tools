@@ -250,6 +250,7 @@ class DoubanSync(_IPluginModule):
     def get_page(self):
         """
         插件的额外页面，返回页面标题和页面内容
+        :return: 标题，页面内容，确定按钮响应函数
         """
         results = self.dbhelper.get_douban_history()
         template = """
@@ -314,7 +315,7 @@ class DoubanSync(_IPluginModule):
                         </a>
                         <div class="dropdown-menu dropdown-menu-end">
                           <a class="dropdown-item text-danger"
-                             href='javascript:delete_douban_history("{{ Item.ID }}")'>
+                             href='javascript:DoubanSync_delete_douban_history("{{ Item.ID }}")'>
                             删除
                           </a>
                         </div>
@@ -330,17 +331,24 @@ class DoubanSync(_IPluginModule):
               </tbody>
             </table>
           </div>
-          <script type="text/javascript">
-              // 删除豆瓣历史记录
-              function delete_douban_history(id){
-                ajax_post("delete_douban_history", {"id": id}, function (ret) {
-                  $("#douban_history_" + id).remove();
-                });
-            
-              }
-          </script>
         """
-        return "同步历史", Template(template).render(HistoryCount=len(results), DoubanHistory=results)
+        return "同步历史", Template(template).render(HistoryCount=len(results),
+                                                     DoubanHistory=results), None
+
+    @staticmethod
+    def get_script():
+        """
+        删除豆瓣历史记录的JS脚本
+        """
+        return """
+          // 删除豆瓣历史记录
+          function DoubanSync_delete_douban_history(id){
+            ajax_post("delete_douban_history", {"id": id}, function (ret) {
+              $("#douban_history_" + id).remove();
+            });
+        
+          }
+        """
 
     def stop_service(self):
         """
@@ -369,7 +377,7 @@ class DoubanSync(_IPluginModule):
             self.info("开始同步豆瓣数据...")
             # 拉取豆瓣数据
             medias = self.__get_all_douban_movies()
-            # 开始检索
+            # 开始搜索
             for media in medias:
                 if not media or not media.get_name():
                     continue
@@ -378,7 +386,7 @@ class DoubanSync(_IPluginModule):
                     search_state = self.dbhelper.get_douban_search_state(media.get_name(), media.year)
                     if not search_state or search_state[0] == "NEW":
                         if self._auto_search:
-                            # 需要检索
+                            # 需要搜索
                             if media.begin_season:
                                 subtitle = "第%s季" % media.begin_season
                             else:
@@ -401,7 +409,7 @@ class DoubanSync(_IPluginModule):
                             if not self._auto_rss:
                                 # 合并季
                                 media_info.begin_season = media.begin_season
-                                # 开始检索
+                                # 开始搜索
                                 search_result, no_exists, search_count, download_count = self.searcher.search_one_media(
                                     media_info=media_info,
                                     in_from=SearchType.DB,
@@ -411,7 +419,7 @@ class DoubanSync(_IPluginModule):
                                     # 下载全了更新为已下载，没下载全的下次同步再次搜索
                                     self.dbhelper.insert_douban_media_state(media, "DOWNLOADED")
                             else:
-                                # 需要加订阅，则由订阅去检索
+                                # 需要加订阅，则由订阅去搜索
                                 self.info(
                                     "%s %s 更新到%s订阅中..." % (media.get_name(), media.year, media.type.value))
                                 code, msg, _ = self.subscribe.add_rss_subscribe(mtype=media.type,
@@ -430,7 +438,7 @@ class DoubanSync(_IPluginModule):
                                     # 插入为已RSS状态
                                     self.dbhelper.insert_douban_media_state(media, "RSS")
                         else:
-                            # 不需要检索
+                            # 不需要搜索
                             if self._auto_rss:
                                 # 加入订阅，使状态为R
                                 self.info("%s %s 更新到%s订阅中..." % (
@@ -466,7 +474,7 @@ class DoubanSync(_IPluginModule):
     def __get_all_douban_movies(self):
         """
         获取每一个用户的每一个类型的豆瓣标记
-        :return: 检索到的媒体信息列表（不含TMDB信息）
+        :return: 搜索到的媒体信息列表（不含TMDB信息）
         """
         if not self._interval \
                 or not self._users \

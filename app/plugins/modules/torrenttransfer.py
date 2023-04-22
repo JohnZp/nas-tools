@@ -10,7 +10,6 @@ from bencode import bdecode, bencode
 
 from app.downloader import Downloader
 from app.media.meta import MetaInfo
-from app.message import Message
 from app.plugins.modules._base import _IPluginModule
 from app.utils import Torrent
 from app.utils.types import DownloaderType
@@ -43,7 +42,6 @@ class TorrentTransfer(_IPluginModule):
     _scheduler = None
     downloader = None
     sites = None
-    message = None
     # 限速开关
     _enable = False
     _cron = None
@@ -57,6 +55,7 @@ class TorrentTransfer(_IPluginModule):
     _nopaths = None
     _deletesource = False
     _fromtorrentpath = None
+    _autostart = False
     # 退出事件
     _event = Event()
     # 待检查种子清单
@@ -208,16 +207,27 @@ class TorrentTransfer(_IPluginModule):
                     # 同一行
                     [
                         {
+                            'title': '校验完成后自动开始',
+                            'required': "",
+                            'tooltip': '自动开始目的下载器中校验完成且100%完整的种子，校验不完整的不会处理',
+                            'type': 'switch',
+                            'default': True,
+                            'id': 'autostart',
+                        },
+                        {
                             'title': '删除源种子',
                             'required': "",
                             'tooltip': '转移成功后删除源下载器中的种子，首次运行请不要打开，避免种子丢失',
                             'type': 'switch',
                             'id': 'deletesource',
-                        },
+                        }
+
+                    ],
+                    [
                         {
                             'title': '运行时通知',
                             'required': "",
-                            'tooltip': '运行任务后会发送通知（需要打开自定义消息通知）',
+                            'tooltip': '运行任务后会发送通知（需要打开插件消息通知）',
                             'type': 'switch',
                             'id': 'notify',
                         },
@@ -235,7 +245,6 @@ class TorrentTransfer(_IPluginModule):
 
     def init_config(self, config=None):
         self.downloader = Downloader()
-        self.message = Message()
         # 读取配置
         if config:
             self._enable = config.get("enable")
@@ -250,6 +259,7 @@ class TorrentTransfer(_IPluginModule):
             self._deletesource = config.get("deletesource")
             self._fromtorrentpath = config.get("fromtorrentpath")
             self._nopaths = config.get("nopaths")
+            self._autostart = config.get("autostart")
 
         # 停止现有任务
         self.stop_service()
@@ -289,11 +299,13 @@ class TorrentTransfer(_IPluginModule):
                     "todownloader": self._todownloader,
                     "deletesource": self._deletesource,
                     "fromtorrentpath": self._fromtorrentpath,
-                    "nopaths": self._nopaths
+                    "nopaths": self._nopaths,
+                    "autostart": self._autostart
                 })
             if self._scheduler.get_jobs():
-                # 追加种子校验服务
-                self._scheduler.add_job(self.check_recheck, 'interval', minutes=3)
+                if self._autostart:
+                    # 追加种子校验服务
+                    self._scheduler.add_job(self.check_recheck, 'interval', minutes=3)
                 # 启动服务
                 self._scheduler.print_jobs()
                 self._scheduler.start()
@@ -455,7 +467,6 @@ class TorrentTransfer(_IPluginModule):
                     downloader_id=todownloader,
                     download_dir=download_dir,
                     download_setting="-2",
-                    is_auto=False
                 )
                 if not download_id:
                     # 下载失败
@@ -482,12 +493,20 @@ class TorrentTransfer(_IPluginModule):
                                                         ids=[download_id],
                                                         delete_file=False)
                     success += 1
+                    # 插入转种记录
+                    history_key = "%s-%s" % (int(self._fromdownloader[0]), hash_item.get('hash'))
+                    self.history(key=history_key,
+                                 value={
+                                     "to_download": int(self._todownloader[0]),
+                                     "to_download_id": download_id,
+                                     "delete_source": self._deletesource,
+                                 })
             # 触发校验任务
-            if success > 0:
+            if success > 0 and self._autostart:
                 self.check_recheck()
             # 发送通知
             if self._notify:
-                self.message.send_custom_message(
+                self.send_message(
                     title="【移转做种任务执行完成】",
                     text=f"总数：{total}，成功：{success}，失败：{fail}"
                 )
@@ -576,8 +595,8 @@ class TorrentTransfer(_IPluginModule):
         判断种子是否可以做种并处于暂停状态
         """
         try:
-            return torrent.get("state") == "pausedUP" if dl_type == DownloaderType.QB \
-                else (torrent.status.stopped and torrent.percent_done == 1)
+            return torrent.get("state") == "pausedUP" and torrent.get("tracker") if dl_type == DownloaderType.QB \
+                else (torrent.status.stopped and torrent.percent_done == 1 and torrent.trackers)
         except Exception as e:
             print(str(e))
             return False

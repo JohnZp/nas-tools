@@ -6,14 +6,15 @@ import os.path
 import re
 import shutil
 import signal
-from collections import defaultdict
+import sqlite3
+import time
 from urllib.parse import unquote
 
 import cn2an
 from flask_login import logout_user, current_user
 from math import floor
 from werkzeug.security import generate_password_hash
-
+from pathlib import Path
 import log
 from app.brushtask import BrushTask
 from app.conf import SystemConfig, ModuleConf
@@ -21,7 +22,7 @@ from app.downloader import Downloader
 from app.filetransfer import FileTransfer
 from app.filter import Filter
 from app.helper import DbHelper, ProgressHelper, ThreadHelper, \
-    MetaHelper, DisplayHelper, WordsHelper, IndexerHelper
+    MetaHelper, DisplayHelper, WordsHelper, IndexerHelper, IyuuHelper
 from app.indexer import Indexer
 from app.media import Category, Media, Bangumi, DouBan, Scraper
 from app.media.meta import MetaInfo, MetaBase
@@ -78,7 +79,7 @@ class WebAction:
             "update_config": self.__update_config,
             "update_directory": self.__update_directory,
             "add_or_edit_sync_path": self.__add_or_edit_sync_path,
-            "get_sync_path": self.__get_sync_path,
+            "get_sync_path": self.get_sync_path,
             "delete_sync_path": self.__delete_sync_path,
             "check_sync_path": self.__check_sync_path,
             "remove_rss_media": self.__remove_rss_media,
@@ -141,7 +142,7 @@ class WebAction:
             "delete_custom_word_group": self.__delete_custom_word_group,
             "add_or_edit_custom_word": self.__add_or_edit_custom_word,
             "get_custom_word": self.__get_custom_word,
-            "delete_custom_word": self.__delete_custom_word,
+            "delete_custom_words": self.__delete_custom_words,
             "check_custom_words": self.__check_custom_words,
             "export_custom_words": self.__export_custom_words,
             "analyse_import_custom_words_code": self.__analyse_import_custom_words_code,
@@ -164,7 +165,6 @@ class WebAction:
             "get_unknown_list": self.get_unknown_list,
             "get_unknown_list_by_page": self.get_unknown_list_by_page,
             "get_customwords": self.get_customwords,
-            "get_directorysync": self.get_directorysync,
             "get_users": self.get_users,
             "get_filterrules": self.get_filterrules,
             "get_downloading": self.get_downloading,
@@ -198,6 +198,7 @@ class WebAction:
             "list_brushtask_torrents": self.__list_brushtask_torrents,
             "set_system_config": self.__set_system_config,
             "get_site_user_statistics": self.get_site_user_statistics,
+            "send_plugin_message": self.send_plugin_message,
             "send_custom_message": self.send_custom_message,
             "media_detail": self.media_detail,
             "media_similar": self.__media_similar,
@@ -228,7 +229,11 @@ class WebAction:
             "get_plugin_page": self.get_plugin_page,
             "get_plugin_state": self.get_plugin_state,
             "get_plugins_conf": self.get_plugins_conf,
-            "update_category_config": self.update_category_config
+            "update_category_config": self.update_category_config,
+            "get_category_config": self.get_category_config,
+            "get_system_processes": self.get_system_processes,
+            "iyuu_bind_site": self.iyuu_bind_site,
+            "run_signin": self.__run_signin
         }
 
     def action(self, cmd, data=None):
@@ -277,6 +282,10 @@ class WebAction:
         BrushTask().stop_service()
         # 关闭自定义订阅
         RssChecker().stop_service()
+        # 关闭自动删种
+        TorrentRemover().stop_service()
+        # 关闭下载器监控
+        Downloader().stop_service()
         # 关闭插件
         PluginManager().stop_service()
 
@@ -291,7 +300,7 @@ class WebAction:
         # 启动定时服务
         Scheduler().run_service()
         # 启动监控服务
-        Sync().run_service()
+        Sync()
         # 启动刷流服务
         BrushTask()
         # 启动自定义订阅服务
@@ -321,7 +330,10 @@ class WebAction:
             os.system(
                 "ps -ef | grep -v grep | grep 'python run.py'|awk '{print $2}'|xargs kill -9")
         else:
-            os.system("pm2 restart NAStool")
+            if SystemUtils.check_process('node'):
+                os.system("pm2 restart NAStool")
+            else:
+                os.system("pkill -f 'python3 run.py'")
 
     @staticmethod
     def handle_message_job(msg, in_from=SearchType.OT, user_id=None, user_name=None):
@@ -334,7 +346,7 @@ class WebAction:
             "/ptr": {"func": TorrentRemover().auto_remove_torrents, "desp": "删种"},
             "/ptt": {"func": Downloader().transfer, "desp": "下载文件转移"},
             "/pts": {"func": SiteSignin().signin, "desp": "站点签到"},
-            "/rst": {"func": Sync().transfer_all_sync, "desp": "目录同步"},
+            "/rst": {"func": Sync().transfer_sync, "desp": "目录同步"},
             "/rss": {"func": Rss().rssdownload, "desp": "RSS订阅"},
             "/db": {"func": WebAction().douban_sync, "desp": "豆瓣同步"},
             "/ssa": {"func": Subscribe().subscribe_search_all, "desp": "订阅搜索"},
@@ -363,7 +375,7 @@ class WebAction:
             message.send_channel_msg(
                 channel=in_from, title="正在运行 %s ..." % command.get("desp"), user_id=user_id)
         else:
-            # 站点检索或者添加订阅
+            # 站点搜索或者添加订阅
             ThreadHelper().start_thread(search_media_by_message,
                                         (msg, in_from, user_id, user_name))
 
@@ -486,7 +498,7 @@ class WebAction:
             "autoremovetorrents": TorrentRemover().auto_remove_torrents,
             "pttransfer": Downloader().transfer,
             "ptsignin": SiteSignin().signin,
-            "sync": Sync().transfer_all_sync,
+            "sync": Sync().transfer_sync,
             "rssdownload": Rss().rssdownload,
             "douban": WebAction().douban_sync,
             "subscribe_search_all": Subscribe().subscribe_search_all,
@@ -499,7 +511,7 @@ class WebAction:
     @staticmethod
     def __search(data):
         """
-        WEB检索资源
+        WEB搜索资源
         """
         search_word = data.get("search_word")
         ident_flag = False if data.get("unident") else True
@@ -1131,8 +1143,6 @@ class WebAction:
                                                    rss_uses=rss_uses)
         # 生效站点配置
         Sites().init_config()
-        # 初始化刷流任务
-        BrushTask().init_config()
         return {"code": ret}
 
     @staticmethod
@@ -1291,8 +1301,9 @@ class WebAction:
         dest = data.get("to")
         unknown = data.get("unknown")
         mode = data.get("syncmod")
-        rename = 1 if StringUtils.to_bool(data.get("rename"), False) else 0
-        enabled = 1 if StringUtils.to_bool(data.get("enabled"), False) else 0
+        compatibility = data.get("compatibility")
+        rename = data.get("rename")
+        enabled = data.get("enabled")
         # 源目录检查
         if not source:
             return {"code": 1, "msg": f'源目录不能为空'}
@@ -1319,36 +1330,28 @@ class WebAction:
             self.dbhelper.delete_config_sync_path(sid)
         # 若启用，则关闭其他相同源目录的同步目录
         if enabled == 1:
-            self.dbhelper.check_config_sync_paths(source=source,
-                                                  enabled=0)
+            Sync().check_source(source=source)
         # 插入数据库
         self.dbhelper.insert_config_sync_path(source=source,
                                               dest=dest,
                                               unknown=unknown,
                                               mode=mode,
+                                              compatibility=compatibility,
                                               rename=rename,
                                               enabled=enabled)
         Sync().init_config()
         return {"code": 0, "msg": ""}
 
-    def __get_sync_path(self, data):
+    @staticmethod
+    def get_sync_path(data=None):
         """
         查询同步目录
         """
-        try:
-            sid = data.get("sid")
-            sync_item = self.dbhelper.get_config_sync_paths(sid=sid)[0]
-            syncpath = {'id': sync_item.ID,
-                        'from': sync_item.SOURCE,
-                        'to': sync_item.DEST or "",
-                        'unknown': sync_item.UNKNOWN or "",
-                        'syncmod': sync_item.MODE,
-                        'rename': sync_item.RENAME,
-                        'enabled': sync_item.ENABLED}
-            return {"code": 0, "data": syncpath}
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            return {"code": 1, "msg": "查询识别词失败"}
+        if data:
+            sync_path = Sync().get_sync_path_conf(sid=data.get("sid"))
+        else:
+            sync_path = Sync().get_sync_path_conf()
+        return {"code": 0, "result": sync_path}
 
     def __delete_sync_path(self, data):
         """
@@ -1366,19 +1369,19 @@ class WebAction:
         flag = data.get("flag")
         sid = data.get("sid")
         checked = data.get("checked")
-        if flag == "rename":
-            self.dbhelper.check_config_sync_paths(sid=sid,
-                                                  rename=1 if checked else 0)
+        if flag == "compatibility":
+            self.dbhelper.check_config_sync_paths(sid=sid, compatibility=1 if checked else 0)
+            Sync().init_config()
+            return {"code": 0}
+        elif flag == "rename":
+            self.dbhelper.check_config_sync_paths(sid=sid, rename=1 if checked else 0)
             Sync().init_config()
             return {"code": 0}
         elif flag == "enable":
             # 若启用，则关闭其他相同源目录的同步目录
             if checked:
-                sync_item = self.dbhelper.get_config_sync_paths(sid=sid)[0]
-                self.dbhelper.check_config_sync_paths(source=sync_item.SOURCE,
-                                                      enabled=0)
-            self.dbhelper.check_config_sync_paths(sid=sid,
-                                                  enabled=1 if checked else 0)
+                Sync().check_source(sid=sid)
+            self.dbhelper.check_config_sync_paths(sid=sid, enabled=1 if checked else 0)
             Sync().init_config()
             return {"code": 0}
         else:
@@ -2617,7 +2620,7 @@ class WebAction:
         开始媒体库同步
         """
         librarys = data.get("librarys") or []
-        SystemConfig().set_system_config(key=SystemConfigKey.SyncLibrary, value=librarys)
+        SystemConfig().set(key=SystemConfigKey.SyncLibrary, value=librarys)
         ThreadHelper().start_thread(MediaServer().sync_mediaserver, ())
         return {"code": 0}
 
@@ -2692,11 +2695,22 @@ class WebAction:
         新增或修改自定义订阅
         """
         uses = data.get("uses")
+        address_parser = data.get("address_parser")
+        if not address_parser:
+            return {"code": 1}
+        address = list(dict(sorted(
+            {k.replace("address_", ""): y for k, y in address_parser.items() if k.startswith("address_")}.items(),
+            key=lambda x: int(x[0])
+        )).values())
+        parser = list(dict(sorted(
+            {k.replace("parser_", ""): y for k, y in address_parser.items() if k.startswith("parser_")}.items(),
+            key=lambda x: int(x[0])
+        )).values())
         params = {
             "id": data.get("id"),
             "name": data.get("name"),
-            "address": data.get("address"),
-            "parser": data.get("parser"),
+            "address": address,
+            "parser": parser,
             "interval": data.get("interval"),
             "uses": uses,
             "include": data.get("include"),
@@ -2705,7 +2719,7 @@ class WebAction:
             "state": data.get("state"),
             "save_path": data.get("save_path"),
             "download_setting": data.get("download_setting"),
-            "note": data.get("note"),
+            "note": {"proxy": data.get("proxy")},
         }
         if uses == "D":
             params.update({
@@ -2734,7 +2748,7 @@ class WebAction:
         检测自定义订阅
         """
         try:
-            flag_dict = {"enable": "Y", "disable": "N"}
+            flag_dict = {"enable": True, "disable": False}
             taskids = data.get("ids")
             state = flag_dict.get(data.get("flag"))
             if state is not None:
@@ -2796,9 +2810,9 @@ class WebAction:
 
     @staticmethod
     def __list_site_resources(data):
-        resources = Indexer().list_builtin_resources(index_id=data.get("id"),
-                                                     page=data.get("page"),
-                                                     keyword=data.get("keyword"))
+        resources = Indexer().list_resources(index_id=data.get("id"),
+                                             page=data.get("page"),
+                                             keyword=data.get("keyword"))
         if not resources:
             return {"code": 1, "msg": "获取站点资源出现错误，无法连接到站点！"}
         else:
@@ -2806,11 +2820,13 @@ class WebAction:
 
     @staticmethod
     def __list_rss_articles(data):
-        uses = RssChecker().get_rsstask_info(taskid=data.get("id")).get("uses")
+        task_info = RssChecker().get_rsstask_info(taskid=data.get("id"))
+        uses = task_info.get("uses")
+        address_count = len(task_info.get("address"))
         articles = RssChecker().get_rss_articles(data.get("id"))
         count = len(articles)
         if articles:
-            return {"code": 0, "data": articles, "count": count, "uses": uses}
+            return {"code": 0, "data": articles, "count": count, "uses": uses, "address_count": address_count}
         else:
             return {"code": 1, "msg": "未获取到报文"}
 
@@ -2850,7 +2866,10 @@ class WebAction:
         if not data.get("articles"):
             return {"code": 2}
         res = RssChecker().check_rss_articles(
-            flag=data.get("flag"), articles=data.get("articles"))
+            taskid=data.get("taskid"),
+            flag=data.get("flag"),
+            articles=data.get("articles")
+        )
         if res:
             return {"code": 0}
         else:
@@ -3044,10 +3063,15 @@ class WebAction:
             ExceptionUtils.exception_traceback(e)
             return {"code": 1, "msg": "查询识别词失败"}
 
-    def __delete_custom_word(self, data):
+    def __delete_custom_words(self, data):
         try:
-            wid = data.get("id")
-            self.dbhelper.delete_custom_word(wid)
+            ids_info = data.get("ids_info")
+            if not ids_info:
+                self.dbhelper.delete_custom_word()
+            else:
+                ids = [id_info.split("_")[1] for id_info in ids_info]
+                for wid in ids:
+                    self.dbhelper.delete_custom_word(wid=wid)
             WordsHelper().init_config()
             return {"code": 0, "msg": ""}
         except Exception as e:
@@ -3236,11 +3260,11 @@ class WebAction:
     @staticmethod
     def get_categories(data):
         if data.get("type") == "电影":
-            categories = Category().get_movie_categorys()
+            categories = Category().movie_categorys
         elif data.get("type") == "电视剧":
-            categories = Category().get_tv_categorys()
+            categories = Category().tv_categorys
         else:
-            categories = Category().get_anime_categorys()
+            categories = Category().anime_categorys
         return {"code": 0, "category": list(categories), "id": data.get("id"), "value": data.get("value")}
 
     def __delete_rss_history(self, data):
@@ -3518,6 +3542,11 @@ class WebAction:
                 "value": f"{item.UPLOAD_VOLUME_FACTOR} {item.DOWNLOAD_VOLUME_FACTOR}",
                 "name": MetaBase.get_free_string(item.UPLOAD_VOLUME_FACTOR, item.DOWNLOAD_VOLUME_FACTOR)
             }
+            # 制作组、字幕组
+            if item.OTHERINFO is None:
+                releasegroup = "未知"
+            else:
+                releasegroup = item.OTHERINFO
             # 季
             filter_season = SE_key.split()[0] if SE_key and SE_key not in [
                 "MOV", "TV"] else None
@@ -3568,6 +3597,8 @@ class WebAction:
                 torrent_filter = dict(result_item.get("filter"))
                 if free_item not in torrent_filter.get("free"):
                     torrent_filter["free"].append(free_item)
+                if releasegroup not in torrent_filter.get("releasegroup"):
+                    torrent_filter["releasegroup"].append(releasegroup)
                 if item.SITE not in torrent_filter.get("site"):
                     torrent_filter["site"].append(item.SITE)
                 if video_encode \
@@ -3617,6 +3648,7 @@ class WebAction:
                     "filter": {
                         "site": [item.SITE],
                         "free": [free_item],
+                        "releasegroup": [releasegroup],
                         "video": [video_encode] if video_encode else [],
                         "season": [filter_season] if filter_season else []
                     }
@@ -3632,6 +3664,8 @@ class WebAction:
         for title, item in SearchResults.items():
             # 排序筛选器 季
             item["filter"]["season"].sort(reverse=True)
+            # 排序筛选器 制作组、字幕组.  将未知放到最后
+            item["filter"]["releasegroup"] = sorted(item["filter"]["releasegroup"], key=lambda x: (x == "未知", x))
             # 排序种子列 集
             item["torrent_dict"] = sorted(item["torrent_dict"].items(),
                                           key=se_sort,
@@ -3673,39 +3707,50 @@ class WebAction:
         mtype = data.get("type")
         return {"code": 0, "result": [rec.as_dict() for rec in self.dbhelper.get_rss_history(rtype=mtype)]}
 
-    @staticmethod
-    def get_downloading(data=None):
+    def get_downloading(self, data=None):
         """
         查询正在下载的任务
         """
-        torrents = Downloader().get_downloading_progress()
         MediaHander = Media()
+        DownloaderHandler = Downloader()
+        torrents = DownloaderHandler.get_downloading_progress()
         for torrent in torrents:
-            # 识别
+            # 先查询下载记录，没有再识别
             name = torrent.get("name")
-            media_info = MediaHander.get_media_info(title=name)
-            if not media_info:
-                torrent.update({
-                    "title": name,
-                    "image": ""
-                })
-                continue
-            if not media_info.tmdb_info:
-                year = media_info.year
-                if year:
-                    title = "%s (%s) %s" % (media_info.get_name(),
-                                            year, media_info.get_season_episode_string())
-                else:
-                    title = "%s %s" % (media_info.get_name(),
-                                       media_info.get_season_episode_string())
+            download_info = self.dbhelper.get_download_history_by_downloader(
+                downloader=DownloaderHandler.default_downloader_id,
+                download_id=torrent.get("id")
+            )
+            if download_info:
+                name = download_info.TITLE
+                year = download_info.YEAR
+                poster_path = download_info.POSTER
+                se = download_info.SE
             else:
-                title = "%s %s" % (media_info.get_title_string(
-                ), media_info.get_season_episode_string())
-            poster_path = media_info.get_poster_image()
+                media_info = MediaHander.get_media_info(title=name)
+                if not media_info:
+                    torrent.update({
+                        "title": name,
+                        "image": ""
+                    })
+                    continue
+                year = media_info.year
+                name = media_info.title or media_info.get_name()
+                se = media_info.get_season_episode_string()
+                poster_path = media_info.get_poster_image()
+            # 拼装标题
+            if year:
+                title = "%s (%s) %s" % (name,
+                                        year,
+                                        se)
+            else:
+                title = "%s %s" % (name, se)
+
             torrent.update({
                 "title": title,
                 "image": poster_path or ""
             })
+
         return {"code": 0, "result": torrents}
 
     def get_transfer_history(self, data):
@@ -3883,26 +3928,6 @@ class WebAction:
             "code": 0,
             "result": groups
         }
-
-    def get_directorysync(self, data=None):
-        """
-        查询所有同步目录
-        """
-        sync_paths = self.dbhelper.get_config_sync_paths()
-        SyncPaths = []
-        if sync_paths:
-            for sync_item in sync_paths:
-                SyncPath = {'id': sync_item.ID,
-                            'from': sync_item.SOURCE,
-                            'to': sync_item.DEST or "",
-                            'unknown': sync_item.UNKNOWN or "",
-                            'syncmod': sync_item.MODE,
-                            'syncmod_name': RmtMode[sync_item.MODE.upper()].value,
-                            'rename': sync_item.RENAME,
-                            'enabled': sync_item.ENABLED}
-                SyncPaths.append(SyncPath)
-        SyncPaths = sorted(SyncPaths, key=lambda o: o.get("from"))
-        return {"code": 0, "result": SyncPaths}
 
     def get_users(self, data=None):
         """
@@ -4120,7 +4145,6 @@ class WebAction:
         name = data.get("name")
         category = data.get("category")
         tags = data.get("tags")
-        content_layout = data.get("content_layout")
         is_paused = data.get("is_paused")
         upload_limit = data.get("upload_limit")
         download_limit = data.get("download_limit")
@@ -4131,7 +4155,6 @@ class WebAction:
                                               name=name,
                                               category=category,
                                               tags=tags,
-                                              content_layout=content_layout,
                                               is_paused=is_paused,
                                               upload_limit=upload_limit or 0,
                                               download_limit=download_limit or 0,
@@ -4231,7 +4254,7 @@ class WebAction:
         """
         获取索引器
         """
-        return {"code": 0, "indexers": Indexer().get_indexer_dict()}
+        return {"code": 0, "indexers": Indexer().get_user_indexer_dict()}
 
     @staticmethod
     def __get_download_dirs(data):
@@ -4280,12 +4303,12 @@ class WebAction:
         twostepcode = data.get("two_step_code")
         ocrflag = data.get("ocrflag")
         # 保存设置
-        SystemConfig().set_system_config(key=SystemConfigKey.CookieUserInfo,
-                                         value={
-                                             "username": username,
-                                             "password": password,
-                                             "two_step_code": twostepcode
-                                         })
+        SystemConfig().set(key=SystemConfigKey.CookieUserInfo,
+                           value={
+                               "username": username,
+                               "password": password,
+                               "two_step_code": twostepcode
+                           })
         retcode, messages = SiteCookie().update_sites_cookie_ua(siteid=siteid,
                                                                 username=username,
                                                                 password=password,
@@ -4407,7 +4430,7 @@ class WebAction:
         if not key or not value:
             return {"code": 1}
         try:
-            SystemConfig().set_system_config(key=key, value=value)
+            SystemConfig().set(key=key, value=value)
             return {"code": 0}
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
@@ -4435,6 +4458,17 @@ class WebAction:
         return {"code": 0, "data": statistics}
 
     @staticmethod
+    def send_plugin_message(data):
+        """
+        发送插件消息
+        """
+        title = data.get("title")
+        text = data.get("text") or ""
+        image = data.get("image") or ""
+        Message().send_plugin_message(title=title, text=text, image=image)
+        return {"code": 0}
+
+    @staticmethod
     def send_custom_message(data):
         """
         发送自定义消息
@@ -4442,7 +4476,10 @@ class WebAction:
         title = data.get("title")
         text = data.get("text") or ""
         image = data.get("image") or ""
-        Message().send_custom_message(title=title, text=text, image=image)
+        message_clients = data.get("message_clients")
+        if not message_clients:
+            return {"code": 1, "msg": "未选择消息服务"}
+        Message().send_custom_message(clients=message_clients, title=title, text=text, image=image)
         return {"code": 0}
 
     @staticmethod
@@ -4591,11 +4628,11 @@ class WebAction:
         """
         script = data.get("javascript") or ""
         css = data.get("css") or ""
-        SystemConfig().set_system_config(key=SystemConfigKey.CustomScript,
-                                         value={
-                                             "css": css,
-                                             "javascript": script
-                                         })
+        SystemConfig().set(key=SystemConfigKey.CustomScript,
+                           value={
+                               "css": css,
+                               "javascript": script
+                           })
         return {"code": 0, "msg": "保存成功"}
 
     @staticmethod
@@ -4603,7 +4640,7 @@ class WebAction:
         """
         执行单个目录的目录同步
         """
-        Sync().transfer_all_sync(sid=data.get("sid"))
+        ThreadHelper().start_thread(Sync().transfer_sync, (data.get("sid"),))
         return {"code": 0, "msg": "执行成功"}
 
     @staticmethod
@@ -4694,9 +4731,17 @@ class WebAction:
         """
         查询用户菜单
         """
+        # 需要过滤的菜单
+        ignore = []
+        # 查询最早加入PT站的时间, 如果不足一个月, 则隐藏刷流任务
+        first_pt_site = SiteUserInfo().get_pt_site_min_join_date()
+        if not first_pt_site or not StringUtils.is_one_month_ago(first_pt_site):
+            ignore.append('brushtask')
+        # 获取可用菜单
+        menus = current_user.get_usermenus(ignore=ignore)
         return {
             "code": 0,
-            "menus": current_user.get_usermenus(),
+            "menus": menus,
             "level": current_user.level
         }
 
@@ -4719,7 +4764,7 @@ class WebAction:
             site = data.get("site")
             params = data.get("params")
         else:
-            UserSiteAuthParams = SystemConfig().get_system_config(SystemConfigKey.UserSiteAuthParams)
+            UserSiteAuthParams = SystemConfig().get(SystemConfigKey.UserSiteAuthParams)
             if UserSiteAuthParams:
                 site = UserSiteAuthParams.get("site")
                 params = UserSiteAuthParams.get("params")
@@ -4728,11 +4773,11 @@ class WebAction:
         state, msg = User().check_user(site, params)
         if state:
             # 保存认证数据
-            SystemConfig().set_system_config(key=SystemConfigKey.UserSiteAuthParams,
-                                             value={
-                                                 "site": site,
-                                                 "params": params
-                                             })
+            SystemConfig().set(key=SystemConfigKey.UserSiteAuthParams,
+                               value={
+                                   "site": site,
+                                   "params": params
+                               })
             return {"code": 0, "msg": "认证成功"}
         return {"code": 1, "msg": f"{msg or '认证失败，请检查合作站点账号是否正常！'}"}
 
@@ -4937,11 +4982,11 @@ class WebAction:
         if not module_id:
             return {"code": -1, "msg": "参数错误"}
         # 用户已安装插件列表
-        user_plugins = SystemConfig().get_system_config(SystemConfigKey.UserInstalledPlugins) or []
+        user_plugins = SystemConfig().get(SystemConfigKey.UserInstalledPlugins) or []
         if module_id not in user_plugins:
             user_plugins.append(module_id)
         # 保存配置
-        SystemConfig().set_system_config(SystemConfigKey.UserInstalledPlugins, user_plugins)
+        SystemConfig().set(SystemConfigKey.UserInstalledPlugins, user_plugins)
         # 重新加载插件
         PluginManager().init_config()
         return {"code": 0, "msg": "插件安装成功"}
@@ -4955,11 +5000,11 @@ class WebAction:
         if not module_id:
             return {"code": -1, "msg": "参数错误"}
         # 用户已安装插件列表
-        user_plugins = SystemConfig().get_system_config(SystemConfigKey.UserInstalledPlugins) or []
+        user_plugins = SystemConfig().get(SystemConfigKey.UserInstalledPlugins) or []
         if module_id in user_plugins:
             user_plugins.remove(module_id)
         # 保存配置
-        SystemConfig().set_system_config(SystemConfigKey.UserInstalledPlugins, user_plugins)
+        SystemConfig().set(SystemConfigKey.UserInstalledPlugins, user_plugins)
         # 重新加载插件
         PluginManager().init_config()
         return {"code": 0, "msg": "插件卸载功"}
@@ -4979,8 +5024,8 @@ class WebAction:
         plugin_id = data.get("id")
         if not plugin_id:
             return {"code": 1, "msg": "参数错误"}
-        title, content = PluginManager().get_plugin_page(pid=plugin_id)
-        return {"code": 0, "title": title, "content": content}
+        title, content, func = PluginManager().get_plugin_page(pid=plugin_id)
+        return {"code": 0, "title": title, "content": content, "func": func}
 
     @staticmethod
     def get_plugin_state(data):
@@ -5013,9 +5058,105 @@ class WebAction:
         """
         text = data.get("config") or ''
         # 保存配置
-        category_path = Config().get_category_path()
+        category_path = Config().category_path
         if category_path:
             with open(category_path, "w", encoding="utf-8") as f:
                 f.write(text)
-            Category().init_config()
         return {"code": 0, "msg": "保存成功"}
+
+    @staticmethod
+    def get_category_config(data):
+        """
+        获取二级分类配置
+        """
+        category_name = data.get("category_name")
+        if not category_name:
+            return {"code": 1, "msg": "请输入二级分类策略名称"}
+        if category_name == "config":
+            return {"code": 1, "msg": "非法二级分类策略名称"}
+        category_path = os.path.join(Config().get_config_path(), f"{category_name}.yaml")
+        if not os.path.exists(category_path):
+            return {"code": 1, "msg": "请保存生成配置文件"}
+        # 读取category配置文件数据
+        with open(category_path, "r", encoding="utf-8") as f:
+            category_text = f.read()
+        return {"code": 0, "text": category_text}
+
+    @staticmethod
+    def backup(full_backup=False, bk_path=None):
+        """
+        @param full_backup  是否完整备份
+        @param bk_path     自定义备份路径
+        """
+        try:
+            # 创建备份文件夹
+            config_path = Path(Config().get_config_path())
+            backup_file = f"bk_{time.strftime('%Y%m%d%H%M%S')}"
+            if bk_path:
+                backup_path = Path(bk_path) / backup_file
+            else:
+                backup_path = config_path / "backup_file" / backup_file
+            backup_path.mkdir(parents=True)
+            # 把现有的相关文件进行copy备份
+            shutil.copy(f'{config_path}/config.yaml', backup_path)
+            shutil.copy(f'{config_path}/default-category.yaml', backup_path)
+            shutil.copy(f'{config_path}/user.db', backup_path)
+
+            # 完整备份不删除表
+            if not full_backup:
+                conn = sqlite3.connect(f'{backup_path}/user.db')
+                cursor = conn.cursor()
+                # 执行操作删除不需要备份的表
+                table_list = [
+                    'SEARCH_RESULT_INFO',
+                    'RSS_TORRENTS',
+                    'DOUBAN_MEDIAS',
+                    'TRANSFER_HISTORY',
+                    'TRANSFER_UNKNOWN',
+                    'TRANSFER_BLACKLIST',
+                    'SYNC_HISTORY',
+                    'DOWNLOAD_HISTORY',
+                    'alembic_version'
+                ]
+                for table in table_list:
+                    cursor.execute(f"""DROP TABLE IF EXISTS {table};""")
+                conn.commit()
+                cursor.close()
+                conn.close()
+            zip_file = str(backup_path) + '.zip'
+            if os.path.exists(zip_file):
+                zip_file = str(backup_path) + '.zip'
+            shutil.make_archive(str(backup_path), 'zip', str(backup_path))
+            shutil.rmtree(str(backup_path))
+            return zip_file
+        except Exception as e:
+            ExceptionUtils.exception_traceback(e)
+            return None
+
+    @staticmethod
+    def get_system_processes(data=None):
+        """
+        获取系统进程
+        """
+        return {"code": 0, "data": SystemUtils.get_all_processes()}
+
+    @staticmethod
+    def iyuu_bind_site(data):
+        """
+        IYUU绑定合作站点
+        """
+        if not data.get('token'):
+            return {"code": -1, "msg": "请先填写IYUU token并保存后再进行IYUU认证！"}
+        iyuuhelper = IyuuHelper(token=data.get('token'))
+        state, msg = iyuuhelper.bind_site(site=data.get('site'),
+                                          passkey=data.get('passkey'),
+                                          uid=data.get('uid'))
+        return {"code": 0 if state else 1, "msg": msg}
+
+    @staticmethod
+    def __run_signin(data):
+        """
+        手动站点签到
+        """
+        ThreadHelper().start_thread(SiteSignin().signin, (data.get("sids"),))
+        return {"code": 0, "msg": "执行成功"}

@@ -130,6 +130,7 @@ class Sites:
     def get_sites(self,
                   siteid=None,
                   siteurl=None,
+                  siteids=None,
                   rss=False,
                   brush=False,
                   signin=False,
@@ -151,6 +152,8 @@ class Sites:
             if signin and not site.get('signin_enable'):
                 continue
             if statistic and not site.get('statistic_enable'):
+                continue
+            if siteids and str(site.get('id')) not in siteids:
                 continue
             ret_sites.append(site)
         if siteid or siteurl:
@@ -259,6 +262,9 @@ class Sites:
         site_url = StringUtils.get_base_url(site_info.get("signurl") or site_info.get("rssurl"))
         if not site_url:
             return False, "未配置站点地址", 0
+        # 站点特殊处理...
+        if '1ptba' in site_url:
+            site_url = site_url + '/index.php'
         chrome = ChromeHelper()
         if site_info.get("chrome") and chrome.get_status():
             # 计时

@@ -3,9 +3,6 @@ import datetime
 import mimetypes
 import os.path
 import re
-import shutil
-import sqlite3
-import time
 import traceback
 import urllib
 import xml.dom.minidom
@@ -57,6 +54,7 @@ ConfigLock = Lock()
 App = Flask(__name__)
 App.wsgi_app = ProxyFix(App.wsgi_app)
 App.config['JSON_AS_ASCII'] = False
+App.config['JSON_SORT_KEYS'] = False
 App.secret_key = os.urandom(24)
 App.permanent_session_lifetime = datetime.timedelta(days=30)
 
@@ -200,9 +198,9 @@ def web():
     SiteFavicons = Sites().get_site_favicon()
     Indexers = Indexer().get_indexers()
     SearchSource = "douban" if Config().get_config("laboratory").get("use_douban_titles") else "tmdb"
-    CustomScriptCfg = SystemConfig().get_system_config(SystemConfigKey.CustomScript)
+    CustomScriptCfg = SystemConfig().get(SystemConfigKey.CustomScript)
     CooperationSites = current_user.get_authsites()
-    Menus = current_user.get_usermenus()
+    Menus = WebAction().get_user_menus().get("menus") or []
     return render_template('navigation.html',
                            GoPage=GoPage,
                            CurrentUser=current_user,
@@ -243,7 +241,7 @@ def index():
 
     # 媒体库
     Librarys = MediaServer().get_libraries()
-    LibrarySyncConf = SystemConfig().get_system_config(SystemConfigKey.SyncLibrary) or []
+    LibrarySyncConf = SystemConfig().get(SystemConfigKey.SyncLibrary) or []
 
     return render_template("index.html",
                            ServerSucess=ServerSucess,
@@ -351,8 +349,8 @@ def sites():
     RuleGroups = {str(group["id"]): group["name"] for group in Filter().get_rule_groups()}
     DownloadSettings = {did: attr["name"] for did, attr in Downloader().get_download_setting().items()}
     ChromeOk = ChromeHelper().get_status()
-    CookieCloudCfg = SystemConfig().get_system_config(SystemConfigKey.CookieCloud)
-    CookieUserInfoCfg = SystemConfig().get_system_config(SystemConfigKey.CookieUserInfo)
+    CookieCloudCfg = SystemConfig().get(SystemConfigKey.CookieCloud)
+    CookieUserInfoCfg = SystemConfig().get(SystemConfigKey.CookieUserInfo)
     return render_template("site/site.html",
                            Sites=CfgSites,
                            RuleGroups=RuleGroups,
@@ -366,7 +364,7 @@ def sites():
 @App.route('/sitelist', methods=['POST', 'GET'])
 @login_required
 def sitelist():
-    IndexerSites = Indexer().get_builtin_indexers(check=False)
+    IndexerSites = Indexer().get_indexers(check=False)
     return render_template("site/sitelist.html",
                            Sites=IndexerSites,
                            Count=len(IndexerSites))
@@ -637,12 +635,16 @@ def brushtask():
 @App.route('/service', methods=['POST', 'GET'])
 @login_required
 def service():
+    # 所有规则组
     RuleGroups = Filter().get_rule_groups()
-    pt = Config().get_config('pt')
+    # 所有同步目录
+    SyncPaths = Sync().get_sync_path_conf()
+    # 所有站点
+    SigninSites = Sites().get_site_dict(signin=True)
 
     # 所有服务
     Services = current_user.get_services()
-
+    pt = Config().get_config('pt')
     # RSS订阅
     if "rssdownload" in Services:
         pt_check_interval = pt.get('pt_check_interval')
@@ -713,16 +715,23 @@ def service():
 
     # 目录同步
     if "sync" in Services:
-        if Sync().get_sync_dirs():
+        if Sync().monitor_sync_path_ids:
             Services['sync'].update({
                 'state': 'ON'
             })
         else:
             Services.pop('sync')
 
+    # 系统进程
+    if "processes" in Services:
+        if not SystemUtils.is_docker() or not SystemUtils.get_all_processes():
+            Services.pop('processes')
+
     return render_template("service.html",
                            Count=len(Services),
                            RuleGroups=RuleGroups,
+                           SyncPaths=SyncPaths,
+                           SigninSites=SigninSites,
                            SchedulerTasks=Services)
 
 
@@ -830,7 +839,7 @@ def basic():
     if proxy:
         proxy = proxy.replace("http://", "")
     RmtModeDict = WebAction().get_rmt_modes()
-    CustomScriptCfg = SystemConfig().get_system_config(SystemConfigKey.CustomScript)
+    CustomScriptCfg = SystemConfig().get(SystemConfigKey.CustomScript)
     return render_template("setting/basic.html",
                            Config=Config().get_config(),
                            Proxy=proxy,
@@ -854,7 +863,7 @@ def customwords():
 @login_required
 def directorysync():
     RmtModeDict = WebAction().get_rmt_modes()
-    SyncPaths = WebAction().get_directorysync().get("result")
+    SyncPaths = Sync().get_sync_path_conf()
     return render_template("setting/directorysync.html",
                            SyncPaths=SyncPaths,
                            SyncCount=len(SyncPaths),
@@ -901,7 +910,8 @@ def download_setting():
 @App.route('/indexer', methods=['POST', 'GET'])
 @login_required
 def indexer():
-    indexers = Indexer().get_builtin_indexers(check=False)
+    # 只有选中的索引器才搜索
+    indexers = Indexer().get_indexers(check=False)
     private_count = len([item.id for item in indexers if not item.public])
     public_count = len([item.id for item in indexers if item.public])
     return render_template("setting/indexer.html",
@@ -916,16 +926,8 @@ def indexer():
 @App.route('/library', methods=['POST', 'GET'])
 @login_required
 def library():
-    # 读取category配置文件数据
-    category_text = ""
-    category = Config().get_category_path()
-    if category and os.path.exists(category):
-        with open(category, "r", encoding="utf-8") as f:
-            category_text = f.read()
     return render_template("setting/library.html",
-                           Config=Config().get_config(),
-                           CategoryPath=category,
-                           CategoryText=category_text)
+                           Config=Config().get_config())
 
 
 # 媒体服务器页面
@@ -1167,7 +1169,7 @@ def wechat():
                 # 文本消息
                 content = DomUtils.tag_value(root_node, "Content", default="")
             if content:
-                log.info(f"收到微信消息：username={user_id}, text={content}")
+                log.info(f"收到微信消息：userid={user_id}, text={content}")
                 # 处理消息内容
                 WebAction().handle_message_job(msg=content,
                                                in_from=SearchType.WX,
@@ -1278,7 +1280,7 @@ def telegram():
         # 获取用户名
         user_name = message.get("from", {}).get("username")
         if text:
-            log.info(f"收到Telegram消息：username={user_name}, text={text}")
+            log.info(f"收到Telegram消息：userid={user_id}, username={user_name}, text={text}")
             # 检查权限
             if text.startswith("/"):
                 if str(user_id) not in interactive_client.get("client").get_admin():
@@ -1330,7 +1332,7 @@ def synology():
         # 获取用户名
         user_name = msg_data.get("username")
         if text:
-            log.info(f"收到Synology Chat消息：username={user_name}, text={text}")
+            log.info(f"收到Synology Chat消息：userid={user_id}, username={user_name}, text={text}")
             WebAction().handle_message_job(msg=text,
                                            in_from=SearchType.SYNOLOGY,
                                            user_id=user_id,
@@ -1455,7 +1457,7 @@ def slack():
             text = msg_json.get("actions")[0].get("value")
             username = msg_json.get("user", {}).get("name")
         elif msg_json.get("type") == "event_callback":
-            userid = msg_json.get("user", {}).get("id")
+            userid = msg_json.get('event', {}).get('user')
             text = re.sub(r"<@[0-9A-Z]+>", "", msg_json.get("event", {}).get("text"), flags=re.IGNORECASE).strip()
             username = ""
         elif msg_json.get("type") == "shortcut":
@@ -1464,7 +1466,7 @@ def slack():
             username = msg_json.get("user", {}).get("username")
         else:
             return "Error"
-        log.info(f"收到Slack消息：username={username}, text={text}")
+        log.info(f"收到Slack消息：userid={userid}, username={username}, text={text}")
         WebAction().handle_message_job(msg=text,
                                        in_from=SearchType.SLACK,
                                        user_id=userid,
@@ -1566,42 +1568,8 @@ def backup():
     备份用户设置文件
     :return: 备份文件.zip_file
     """
-    try:
-        # 创建备份文件夹
-        config_path = Path(Config().get_config_path())
-        backup_file = f"bk_{time.strftime('%Y%m%d%H%M%S')}"
-        backup_path = config_path / "backup_file" / backup_file
-        backup_path.mkdir(parents=True)
-        # 把现有的相关文件进行copy备份
-        shutil.copy(f'{config_path}/config.yaml', backup_path)
-        shutil.copy(f'{config_path}/default-category.yaml', backup_path)
-        shutil.copy(f'{config_path}/user.db', backup_path)
-        conn = sqlite3.connect(f'{backup_path}/user.db')
-        cursor = conn.cursor()
-        # 执行操作删除不需要备份的表
-        table_list = [
-            'SEARCH_RESULT_INFO',
-            'RSS_TORRENTS',
-            'DOUBAN_MEDIAS',
-            'TRANSFER_HISTORY',
-            'TRANSFER_UNKNOWN',
-            'TRANSFER_BLACKLIST',
-            'SYNC_HISTORY',
-            'DOWNLOAD_HISTORY',
-            'alembic_version'
-        ]
-        for table in table_list:
-            cursor.execute(f"""DROP TABLE IF EXISTS {table};""")
-        conn.commit()
-        cursor.close()
-        conn.close()
-        zip_file = str(backup_path) + '.zip'
-        if os.path.exists(zip_file):
-            zip_file = str(backup_path) + '.zip'
-        shutil.make_archive(str(backup_path), 'zip', str(backup_path))
-        shutil.rmtree(str(backup_path))
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
+    zip_file = WebAction().backup()
+    if not zip_file:
         return make_response("创建备份失败", 400)
     return send_file(zip_file)
 
@@ -1657,6 +1625,21 @@ def ical():
     response = Response(cal.to_ical(), mimetype='text/calendar')
     response.headers['Content-Disposition'] = 'attachment; filename=nastool.ics'
     return response
+
+
+@App.route('/img')
+@login_required
+def Img():
+    """
+    图片中换服务
+    """
+    url = request.args.get('url')
+    if not url:
+        return make_response("参数错误", 400)
+    return send_file(WebUtils.get_image_stream(url),
+                     mimetype='image/jpeg',
+                     download_name='image.jpg',
+                     as_attachment=True)
 
 
 # base64模板过滤器

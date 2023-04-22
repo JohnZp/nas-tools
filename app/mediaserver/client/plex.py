@@ -1,5 +1,6 @@
-from app.utils import ExceptionUtils
-from app.utils.types import MediaServerType
+from functools import lru_cache
+from app.utils import ExceptionUtils, ImageUtils
+from app.utils.types import MediaServerType, MediaType
 
 import log
 from config import Config
@@ -237,7 +238,7 @@ class Plex(_IMediaClient):
             log.error(f"【{self.client_name}】获取剧集封面出错：" + str(e))
             return None
 
-    def get_image_by_id(self, item_id, image_type):
+    def get_remote_image_by_id(self, item_id, image_type):
         """
         根据ItemId从Plex查询图片地址
         :param item_id: 在Emby中的ID
@@ -257,6 +258,14 @@ class Plex(_IMediaClient):
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
             log.error(f"【{self.client_name}】获取封面出错：" + str(e))
+        return None
+
+    def get_local_image_by_id(self, item_id, remote=True):
+        """
+        根据ItemId从媒体服务器查询有声书图片地址
+        :param item_id: 在Emby中的ID
+        :param remote: 是否远程使用
+        """
         return None
 
     def refresh_root_library(self):
@@ -288,8 +297,40 @@ class Plex(_IMediaClient):
             return []
         libraries = []
         for library in self._libraries:
-            libraries.append({"id": library.key, "name": library.title})
+            match library.type:
+                case "movie":
+                    library_type = MediaType.MOVIE.value
+                    library_image = self.get_libraries_image(library.key)
+                case "show":
+                    library_type = MediaType.TV.value
+                    library_image = self.get_libraries_image(library.key)
+                case _:
+                    continue
+            libraries.append({
+                "id": library.key,
+                "name": library.title,
+                "paths": library.locations,
+                "type": library_type,
+                "image": library_image,
+                "link": f"https://app.plex.tv/desktop/#!/media/{self._plex.machineIdentifier}"
+                        f"/com.plexapp.plugins.library?source={library.key}"
+            })
         return libraries
+
+    @lru_cache(maxsize=10)
+    def get_libraries_image(self, library_key):
+        library = self._plex.library.sectionByID(library_key)
+        items = library.recentlyAdded()
+        poster_urls = []
+        for item in items:
+            if item.posterUrl is not None:
+                poster_urls.append(item.posterUrl)
+            if len(poster_urls) == 4:
+                break
+        if len(poster_urls) < 4:
+            return "../static/img/mediaserver/plex_backdrop.png"
+        image = ImageUtils.get_libraries_image(poster_urls)
+        return image
 
     def get_iteminfo(self, itemid):
         """
