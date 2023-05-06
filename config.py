@@ -18,6 +18,8 @@ RMT_MEDIAEXT = ['.mp4', '.mkv', '.ts', '.iso',
                 '.tp']
 # 支持的字幕文件后缀格式
 RMT_SUBEXT = ['.srt', '.ass', '.ssa']
+# 支持的音轨文件后缀格式
+RMT_AUDIO_TRACK_EXT = ['.mka']
 # 电视剧动漫的分类genre_ids
 ANIME_GENREIDS = ['16']
 # 默认过滤的文件大小，150M
@@ -58,6 +60,12 @@ TMDB_API_DOMAIN = 'api.themoviedb.org'
 # TMDB图片地址
 TMDB_IMAGE_DOMAIN = 'image.tmdb.org'
 TMDB_PEOPLE_PROFILE_URL = 'https://www.themoviedb.org/person/%s'
+# 检查更新的地址
+NASTOOL_UPDATE_URL = "https://nastool.cn/%s/update"
+# 插件安装统计地址
+NASTOOL_PLUGIN_INSTALL = "https://nastool.cn/plugin/%s/install"
+# 插件安装统计数据
+NASTOOL_PLUGIN_STATISTIC = "https://nastool.cn/plugin/statistic"
 # 添加下载时增加的标签，开始只监控NAStool添加的下载时有效
 PT_TAG = "NASTOOL"
 # 电影默认命名格式
@@ -108,6 +116,7 @@ def singleconfig(cls):
 class Config(object):
     _config = {}
     _config_path = None
+    _user = None
 
     def __init__(self):
         self._config_path = os.environ.get('NASTOOL_CONFIG')
@@ -149,6 +158,14 @@ class Config(object):
                 if module_path not in sys.path:
                     sys.path.append(module_path)
 
+    @property
+    def current_user(self):
+        return self._user
+
+    @current_user.setter
+    def current_user(self, user):
+        self._user = user
+
     def get_proxies(self):
         return self.get_config('app').get("proxies")
 
@@ -189,6 +206,8 @@ class Config(object):
         domain = (self.get_config('app') or {}).get('domain')
         if domain and not domain.startswith('http'):
             domain = "http://" + domain
+        if domain and str(domain).endswith("/"):
+            domain = domain[:-1]
         return domain
 
     @staticmethod

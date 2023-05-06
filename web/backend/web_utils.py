@@ -1,4 +1,6 @@
 import io
+from functools import lru_cache
+from urllib.parse import quote
 
 import cn2an
 
@@ -6,7 +8,7 @@ from app.media import Media, Bangumi, DouBan
 from app.media.meta import MetaInfo
 from app.utils import StringUtils, ExceptionUtils, SystemUtils, RequestUtils, IpUtils
 from app.utils.types import MediaType
-from config import Config
+from config import Config, NASTOOL_UPDATE_URL
 from version import APP_VERSION
 
 
@@ -51,21 +53,17 @@ class WebUtils:
         try:
             releases_update_only = Config().get_config("app").get("releases_update_only")
             version_res = RequestUtils(proxies=Config().get_proxies()).get_res(
-                "https://api.github.com/repos/NAStool/nas-tools/releases/latest")
-            commit_res = RequestUtils(proxies=Config().get_proxies()).get_res(
-                "https://api.github.com/repos/NAStool/nas-tools/commits/master")
-            if version_res and commit_res:
+                NASTOOL_UPDATE_URL % quote(WebUtils.get_current_version()))
+            if version_res:
                 ver_json = version_res.json()
-                commit_json = commit_res.json()
-                if releases_update_only:
-                    version = f"{ver_json['tag_name']}"
-                else:
-                    version = f"{ver_json['tag_name']} {commit_json['sha'][:7]}"
-                url = ver_json["html_url"]
-                return version, url, True
+                version = ver_json.get("latest")
+                link = ver_json.get("link")
+                if version and releases_update_only:
+                    version = version.split()[0]
+                return version, link
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
-        return None, None, False
+        return None, None
 
     @staticmethod
     def get_mediainfo_from_id(mtype, mediaid, wait=False):
@@ -191,11 +189,12 @@ class WebUtils:
         return range(StartPage, EndPage + 1)
 
     @staticmethod
-    def get_image_stream(url):
+    @lru_cache(maxsize=128)
+    def request_cache(url):
         """
-        根据地址下载图片
+        带缓存的请求
         """
         ret = RequestUtils().get_res(url)
-        if ret is not None:
-            return io.BytesIO(ret.content)
+        if ret:
+            return ret.content
         return None
